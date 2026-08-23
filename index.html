@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>派工案件抽查規劃工具</title>
+<link rel="stylesheet" href="style.css?v=69">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
+<script src="data.js?v=69"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>派工案件抽查規劃工具</h1>
+    <div class="sub" id="dataSummaryLine">尚未載入資料</div>
+  </div>
+  <div class="toolbar">
+    <button id="btnOpenMap">🗺️ 開啟地圖視窗</button>
+  </div>
+</header>
+
+<div class="app-shell">
+  <nav class="side-nav" id="sideNav">
+    <button class="side-nav-item" data-tab="import">📥 資料匯入</button>
+    <button class="side-nav-item" data-tab="list">🔍 本月案件管理</button>
+    <button class="side-nav-item" data-tab="lastmonth">📋 上月抽查管理</button>
+    <button class="side-nav-item" data-tab="station">🚇 依捷運站分群</button>
+    <button class="side-nav-item" data-tab="route">🚩 路線規劃</button>
+  </nav>
+
+  <main class="content-area">
+
+    <section class="tab-panel" data-tab-panel="import">
+      <section class="panel">
+        <h2>📥 資料匯入</h2>
+        <div class="toolbar">
+          <input type="file" id="fileInput" accept=".xlsx,.xls" multiple style="display:none">
+          <button class="secondary" id="btnUpload">匯入本月 xlsx 案件檔</button>
+          <select id="importMode">
+            <option value="merge">合併現有資料</option>
+            <option value="replace">取代現有資料</option>
+          </select>
+          <button class="ghost" id="btnClearData">清除現有資料</button>
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+            <input type="checkbox" id="excludeOldOnImport">
+            匯入時排除3天前的「鄰里無主垃圾清運」「道路散落物或油漬處理」案件（可用「復原」按鈕找回）
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>📋 上月抽查資料</h2>
+        <div class="hint">先匯入上月完整案件清單，再匯入機關抽查清單；會以抽查清單為準，比對出地址/案件內容等明細，其餘沒被抽查的案件不列入。匯入結果在「上月抽查管理」頁籤查看。</div>
+        <div class="toolbar" style="margin-top:10px">
+          <input type="file" id="lastMonthFullInput" accept=".xlsx,.xls" multiple style="display:none">
+          <button class="secondary" id="btnUploadLastMonthFull">📥 匯入上月案件清單</button>
+          <input type="file" id="lastMonthAuditInput" accept=".xlsx,.xls" multiple style="display:none">
+          <button class="secondary" id="btnUploadLastMonthAudit">📥 匯入抽查清單</button>
+          <button class="ghost" id="btnClearLastMonth">清除上月資料</button>
+        </div>
+        <div class="hint" id="lastMonthSummary" style="margin-top:6px"></div>
+      </section>
+
+      <section class="panel">
+        <details class="section-details" id="geocodeSettingsDetails">
+          <summary class="panel-title">⚙️ 地理編碼設定 <span class="count-hint" id="geocodeSettingsHint"></span></summary>
+          <div class="hint">預設用免費的 OpenStreetMap（速度較慢，每筆約 1.1 秒）。若已在 Google Cloud 申請 Maps 平台的 API 金鑰並啟用 Geocoding API，可貼在這裡改用 Google（速度快很多，但用量超過免費額度需自行負擔費用）。金鑰只會存在您這台瀏覽器的 localStorage，不會上傳到任何地方。</div>
+          <div class="toolbar" style="margin-top:10px">
+            <select id="geocodeProvider">
+              <option value="auto">地理編碼：自動（有填金鑰就用 Google，否則用 OSM）</option>
+              <option value="osm">地理編碼：強制使用 OpenStreetMap（免費）</option>
+              <option value="google">地理編碼：強制使用 Google（需金鑰）</option>
+            </select>
+            <select id="tileProvider">
+              <option value="osm">地圖底圖：OpenStreetMap（免費）</option>
+              <option value="google">地圖底圖：Google 地圖（需金鑰，且已啟用 Maps JavaScript API）</option>
+            </select>
+            <input type="text" id="googleApiKeyInput" placeholder="Google API 金鑰（AIza...）" style="width:320px">
+            <button id="btnSaveGeocodeSettings">儲存設定</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel" id="dashboardPanel">
+        <h2>📊 案件總覽</h2>
+        <div class="stat-cards" id="statCards"></div>
+      </section>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="list">
+      <div class="split-layout">
+        <div class="split-main">
+          <section class="panel">
+            <h2>🗂️ 本月案件管理</h2>
+            <div class="hint">勾選篩選下方清單，預設全部顯示；取消勾選＝排除該項目。</div>
+            <div class="breakdown-grid" style="margin-top:10px">
+              <details class="breakdown-block" id="detailsCategory">
+                <summary><span class="label">依案件項目</span><span class="count-hint" id="hintCategory"></span></summary>
+                <div id="breakdownCategory"></div>
+              </details>
+              <details class="breakdown-block" id="detailsAgency">
+                <summary><span class="label">依承辦機關</span><span class="count-hint" id="hintAgency"></span></summary>
+                <div id="breakdownAgency"></div>
+              </details>
+            </div>
+            <div class="toolbar" style="margin-top:12px">
+              <input type="search" id="searchBox" placeholder="搜尋地址或案件內容關鍵字…" style="width:260px">
+              <button class="ghost" id="btnClearFilter">清除篩選</button>
+              <button class="ghost" id="btnAutoRemoveOld" title="將「鄰里無主垃圾清運」「道路散落物或油漬處理」中，成案時間為 3 天前的案件從資料中移除">🗑️ 移除3天前垃圾/散落物案件</button>
+              <button class="ghost" id="btnUndoRemoved" style="display:none"></button>
+              <span class="spacer"></span>
+              <button id="btnExportCsv">匯出目前清單 CSV</button>
+            </div>
+            <div class="table-wrap" style="margin-top:12px">
+              <table class="case-table" id="caseTable">
+                <colgroup>
+                  <col style="width:14%">
+                  <col style="width:8%">
+                  <col style="width:9%">
+                  <col style="width:9%">
+                  <col style="width:21%">
+                  <col style="width:26%">
+                  <col style="width:9%">
+                  <col style="width:56px">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th data-sort="id">案件編號</th>
+                    <th data-sort="district">行政區</th>
+                    <th data-sort="category">案件項目</th>
+                    <th data-sort="agency">承辦機關</th>
+                    <th data-sort="address">發生地址</th>
+                    <th>案件內容</th>
+                    <th data-sort="createdAt">成案時間</th>
+                    <th style="width:56px" title="♡ 標記要排路線／🚫 標記暫時否決">♡🚫</th>
+                  </tr>
+                </thead>
+                <tbody id="caseTableBody"></tbody>
+              </table>
+            </div>
+            <div class="pagination">
+              <button class="ghost" id="btnPrevPage">‹ 上一頁</button>
+              <span id="pageIndicator"></span>
+              <button class="ghost" id="btnNextPage">下一頁 ›</button>
+              <select id="pageSizeSelect" title="每頁筆數">
+                <option value="10">每頁 10 筆</option>
+                <option value="20">每頁 20 筆</option>
+                <option value="50">每頁 50 筆</option>
+              </select>
+            </div>
+          </section>
+        </div>
+
+        <aside class="split-side">
+          <section class="panel">
+            <h2>📍 附近案件 <span class="count-hint nearby-embed-hint"></span></h2>
+            <div class="hint">點案件或地圖標記，列出周邊 500 公尺內其他案件（含上月抽查案件）。</div>
+            <div class="nearby-embed-panel" style="margin-top:10px"><div class="empty-state">尚未選取案件</div></div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="lastmonth">
+      <div class="split-layout">
+        <div class="split-main">
+          <section class="panel">
+            <h2>📋 上月抽查管理</h2>
+            <div class="hint">合併後的上月抽查清單（以抽查清單為準，比對出地址/案件內容等明細）；要匯入或更新資料請到「資料匯入」頁籤。</div>
+            <div class="hint" id="lastMonthSummary" style="margin-top:4px"></div>
+          </section>
+
+          <section class="panel">
+            <h2>🔍 上月抽查清單</h2>
+            <div class="toolbar">
+              <input type="search" id="lastMonthSearchBox" placeholder="搜尋地址或案件內容關鍵字…" style="width:260px">
+              <button class="ghost" id="btnClearLastMonthFilter">清除篩選</button>
+            </div>
+            <div class="table-wrap" style="margin-top:12px">
+              <table class="case-table" id="lastMonthTable">
+                <colgroup>
+                  <col style="width:14%">
+                  <col style="width:8%">
+                  <col style="width:9%">
+                  <col style="width:9%">
+                  <col style="width:21%">
+                  <col style="width:26%">
+                  <col style="width:9%">
+                  <col style="width:56px">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>案件編號</th>
+                    <th>行政區</th>
+                    <th>案件項目</th>
+                    <th>承辦機關</th>
+                    <th>發生地址</th>
+                    <th>案件內容／抽查資訊</th>
+                    <th>成案時間</th>
+                    <th style="width:56px" title="♡ 標記要排路線／🚫 標記暫時否決">♡🚫</th>
+                  </tr>
+                </thead>
+                <tbody id="lastMonthTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <aside class="split-side">
+          <section class="panel">
+            <h2>📍 附近案件 <span class="count-hint nearby-embed-hint"></span></h2>
+            <div class="hint">點案件或地圖標記，列出周邊 500 公尺內其他案件（含本月份案件）。</div>
+            <div class="nearby-embed-panel" style="margin-top:10px"><div class="empty-state">尚未選取案件</div></div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="station">
+      <div class="split-layout">
+        <div class="split-main">
+          <section class="panel">
+            <h2>🚇 依鄰近捷運站分群建議 <span class="count-hint" id="stationGroupHint"></span></h2>
+            <div class="hint">依最近捷運站分群（含本月案件與上月抽查案件），方便排在同一趟查訪；點案件同步右側周邊清單並定位地圖，按 ♡ 標記要排路線的案件，按 🚫 標記暫時否決不列入考量。</div>
+            <div id="stationGroupPanel" style="margin-top:10px"></div>
+          </section>
+        </div>
+
+        <aside class="split-side">
+          <section class="panel">
+            <h2>📍 附近案件 <span class="count-hint nearby-embed-hint"></span></h2>
+            <div class="hint">點案件或地圖標記，列出周邊 500 公尺內其他案件（含上月抽查案件）。</div>
+            <div class="nearby-embed-panel" style="margin-top:10px"><div class="empty-state">尚未選取案件</div></div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="route">
+      <div class="split-layout">
+        <div class="split-main">
+      <section class="panel">
+        <h2>❤️ 已標記案件 <span class="count-hint" id="markedListHint"></span></h2>
+        <div class="hint">按 ♡ 可取消標記；點案件可對應到地圖。確認名單後再到下方按「規劃路線」。</div>
+        <div id="markedListPanel" style="margin-top:10px"></div>
+      </section>
+
+      <section class="panel">
+        <h2>🚩 建議查訪路線 <span class="count-hint" id="routeHint"></span></h2>
+        <div class="toolbar">
+          <select id="routeStartStation">
+            <option value="">不指定起點（案件間最短路線）</option>
+          </select>
+          <button id="btnPlanRoute">規劃路線</button>
+          <button class="ghost" id="btnExportRoute">匯出路線 CSV</button>
+          <button class="ghost" id="btnClearMarked">清空標記</button>
+          <span class="spacer"></span>
+          <span class="hint" style="margin:0">Ctrl+V 將截圖貼於此</span>
+          <input type="file" id="routeMapImageInput" accept="image/*" style="display:none">
+          <button class="ghost" id="btnChooseRouteMapImage">🖼️ 或選擇圖片檔案</button>
+          <span class="hint" id="routeMapImageStatus" style="margin:0"></span>
+          <button id="btnExportRouteWord">📄 匯出 Word</button>
+        </div>
+        <div id="routePanel" style="margin-top:10px"></div>
+      </section>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer>資料僅存於本機瀏覽器 (localStorage)，未上傳任何伺服器。地圖已移至獨立視窗（右上角「開啟地圖視窗」），會自動同步這裡匯入的全部案件。每月請重新匯入最新 xlsx 案件檔。</footer>
+
+<script src="app.js?v=69"></script>
+</body>
+</html>

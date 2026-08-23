@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>派工案件地圖與路線規劃</title>
+<link rel="stylesheet" href="style.css?v=69">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+<header class="topbar" style="padding:8px 20px">
+  <div>
+    <h1 style="font-size:15px">🗺️ 派工案件地圖與路線規劃</h1>
+    <div class="sub" id="mapSummaryLine">尚未匯入任何案件</div>
+  </div>
+  <div class="toolbar">
+    <span class="hint" style="margin:0">即時同步主視窗案件</span>
+    <span class="hint" id="providerHint" style="margin:0"></span>
+    <button id="btnGeocodeSelected" title="開啟這個視窗、或主視窗有新案件/改地址時會自動定位；這個按鈕是手動重新查一次用的">定位案件座標</button>
+    <button id="btnExportUnlocated" style="display:none">📋 匯出未定位清單 CSV</button>
+  </div>
+</header>
+
+<div class="container" style="padding:8px 14px;gap:6px">
+  <div class="progress-line" id="geocodeProgress" style="min-height:0"></div>
+  <div id="mapWrap">
+    <div id="map" style="height:calc(100vh - 130px)"></div>
+    <svg id="leaderLineSvg">
+      <defs>
+        <marker id="leaderArrowHead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#1d6fd6" />
+        </marker>
+      </defs>
+      <line id="leaderLine" marker-end="url(#leaderArrowHead)" />
+    </svg>
+    <div id="markerInfoPanel" class="marker-info-panel">
+      <button id="markerInfoClose" class="marker-info-close" title="關閉">✕</button>
+      <div id="markerInfoContent"></div>
+    </div>
+  </div>
+  <div class="legend" id="mapLegend"></div>
+  <div id="unlocatedPanel"></div>
+</div>
+
+<script src="data.js?v=69"></script>
+<script src="map.js?v=69"></script>
+</body>
+</html>

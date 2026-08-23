@@ -1,0 +1,726 @@
+:root {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --ink: #1f2937;
+  --muted: #6b7280;
+  --border: #e2e5e9;
+  --accent: #1d6fd6;
+  --accent-dark: #14538f;
+  --good: #1a8a5f;
+  --warn: #c9821a;
+  --chip-bg: #eef3fb;
+  --row-hover: #f0f6ff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Microsoft JhengHei", "Noto Sans TC", -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+header.topbar {
+  background: linear-gradient(90deg, var(--accent-dark), var(--accent));
+  color: #fff;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+header.topbar h1 {
+  font-size: 18px;
+  margin: 0;
+  font-weight: 600;
+}
+
+header.topbar .sub {
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* .container 是地圖頁 (map.html) 在用的簡單版面，主頁面已經改用下面的 .app-shell 頁籤導覽 */
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 主畫面改成左側頁籤導覽 + 右側內容區，取代原本全部功能堆疊在一頁、要一直往下捲的做法。
+   一次只顯示一個頁籤的內容（.tab-panel.active），左側按鈕點了才切換，見 app.js 的 switchTab() */
+.app-shell {
+  max-width: 1500px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 18px;
+}
+
+.side-nav {
+  flex: 0 0 190px;
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.side-nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.side-nav-item:hover { background: var(--row-hover); }
+.side-nav-item.active { background: var(--accent); color: #fff; }
+
+.content-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: flex; flex-direction: column; gap: 16px; }
+
+/* 案件清單／依捷運站分群／路線規劃這三個頁籤內部改成左右並排：左邊主內容、右邊固定顯示
+   地圖選點周邊案件，不用再上下堆疊、捲頁找周邊清單。附近案件欄位少（只有項目/編號/地址/距離/♡），
+   不需要跟主內容對半分，改用固定寬度的窄側欄，主內容則吃掉其餘空間 */
+.split-layout { display: flex; gap: 16px; align-items: flex-start; }
+/* 案件量大時左右兩欄各自可能很長，使用者希望滑鼠停在哪一欄滾輪就只捲那一欄，不要兩欄一起被拖著捲、
+   也不要捲整個頁面。兩欄都給獨立的 max-height + overflow-y:auto，變成各自的捲動容器；
+   搭配 position:sticky 讓兩欄貼齊視窗滾動到的位置，max-height 抓 100vh 扣掉跟 sticky 對稱的
+   上下留白，貼齊之後兩欄剛好都塞進可視範圍內，滑鼠停在哪一欄，滾輪事件就只會捲那個內部捲動容器 */
+.split-main {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px;
+  position: sticky; top: 18px; max-height: calc(100vh - 36px); overflow-y: auto;
+}
+.split-side {
+  flex: 0 0 300px; min-width: 0;
+  position: sticky; top: 18px; max-height: calc(100vh - 36px); overflow-y: auto;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h2 {
+  font-size: 15px;
+  margin: 0 0 12px 0;
+  color: var(--accent-dark);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar .spacer { flex: 1; }
+
+button, .btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+button:hover { background: var(--accent-dark); }
+button.secondary { background: #fff; color: var(--accent-dark); border: 1px solid var(--accent); }
+button.secondary:hover { background: var(--chip-bg); }
+button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+button.ghost:hover { background: #f4f4f4; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input[type=text], input[type=search], select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fbfcfe;
+}
+.stat-card .num { font-size: 24px; font-weight: 700; color: var(--accent-dark); }
+.stat-card .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* 原本 3 欄（案件項目/行政區/承辦機關），使用者確認這個工具每次匯入的 xlsx 本來就是單一行政區的
+   匯出檔，「依行政區」勾選清單永遠只有 1 種、沒有實際篩選用途，拿掉後剩 2 欄 */
+.breakdown-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .breakdown-grid { grid-template-columns: 1fr; }
+}
+
+.breakdown-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 10px;
+  background: #fbfcfe;
+}
+.breakdown-block summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+.breakdown-block summary::-webkit-details-marker { display: none; }
+.breakdown-block summary .label::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--accent);
+  transition: transform 0.15s;
+}
+.breakdown-block[open] summary .label::before { transform: rotate(90deg); }
+.breakdown-block[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.count-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--accent-dark);
+  background: var(--chip-bg);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+.section-details > summary.panel-title {
+  list-style: none;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+.section-details > summary.panel-title::-webkit-details-marker { display: none; }
+.section-details > summary.panel-title::after {
+  content: "▸";
+  color: var(--accent);
+  transition: transform 0.15s;
+  margin-left: 2px;
+}
+.section-details[open] > summary.panel-title::after { transform: rotate(90deg); }
+.section-details > summary.panel-title .count-hint {
+  margin-left: auto;
+}
+.section-details > *:not(summary) {
+  margin-top: 12px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+  border-bottom: 1px dashed #eee;
+}
+.bar-row:hover { background: var(--row-hover); }
+.bar-row.active { background: var(--chip-bg); }
+.bar-row .name { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.bar-row .name .bar-check { pointer-events: none; margin: 0; }
+.bar-row .name .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+.bar-row .track { grid-column: 1 / span 2; height: 6px; background: #eef1f4; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+.bar-row .fill { height: 100%; background: var(--accent); }
+.bar-row .count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* table-layout:fixed + 上面的 <colgroup> 固定寬度百分比，是故意的：瀏覽器預設的自動版面配置
+   會依「當頁全部案件的內容」動態決定每欄寬度，只要某一欄（例如案件項目的徽章文字）剛好比較長，
+   就可能把發生地址欄擠到只剩幾十 px，導致地址被迫一字一行、整列高度暴增到 400px 以上，
+   而且哪些案件會中獎完全無法預期。固定寬度後，每欄大小穩定、不會被其他欄的內容影響 */
+table.case-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+table.case-table th {
+  text-align: left;
+  padding: 8px 8px;
+  background: #f8fafc;
+  border-bottom: 2px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+table.case-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+table.case-table .badge { white-space: normal; } /* 欄寬固定後，徽章文字太長時要能換行，不能撐爆欄寬 */
+table.case-table tr:hover td { background: var(--row-hover); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+table.case-table tbody tr[data-id] { cursor: pointer; }
+/* 整列都是點擊觸發動作（跳地圖/編輯地址），不是給人選取文字用的。
+   沒有這行的話，滑鼠按下到放開之間只要有一點點移動（很正常，手不可能完全不動），
+   瀏覽器容易把它當成「拖曳選字」而不是「點擊」，尤其地址換成兩行時更容易發生，
+   選字會整個吃掉那次點擊，看起來就像「點了沒反應」。地址編輯用的 <input> 不受影響，
+   輸入框本身還是可以正常選取/編輯文字 */
+table.case-table tbody tr[data-id] { user-select: none; }
+.addr-edit-input { user-select: text; } /* user-select:none 會往下繼承到編輯用的輸入框，這裡要救回來，不然沒辦法選取輸入框裡的文字 */
+
+/* 不能用 white-space:nowrap——欄寬不夠時，數字不會換行，會直接橫向溢出疊到「行政區」欄上面
+   （已經在案件清單改左右並排、表格只剩一半寬度後這樣中獎過一次）。讓它照一般規則換行更安全 */
+td.case-id-cell { font-family: "Consolas", monospace; font-size: 12px; color: var(--muted); }
+
+td.addr-cell-wrap {
+  cursor: pointer;
+}
+/* 注意：flex 排版放在裡面這個 div，不能直接放在 td 上——td 直接設 display:flex
+   會被瀏覽器拉出表格版面計算，導致這一格不再跟同一列其他格一起算列高，
+   造成列與列之間的分隔線對不齊（實際發生過，別再犯） */
+.addr-cell-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.addr-cell-inner .addr-edit-btn {
+  cursor: pointer;
+  opacity: 0.55;
+  font-size: 13px;
+  padding: 2px 4px;
+  flex: 0 0 auto;
+}
+.addr-cell-inner .addr-edit-btn:hover { opacity: 1; }
+.addr-cell-inner .addr-text { flex: 1 1 auto; }
+.addr-edit-input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-size: 13px;
+}
+/* 不限定 td，因為「依捷運站分群」現在也用同一套「案件內容展開/收合」樣式，但那邊是 div 格線佈局，不是表格 */
+.content-cell .full { display: none; margin-top: 4px; color: var(--muted); }
+.content-cell.expanded .full { display: block; }
+.content-cell .toggle { color: var(--accent); cursor: pointer; font-size: 12px; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--chip-bg);
+  color: var(--accent-dark);
+  white-space: nowrap;
+}
+
+.badge.status-done { background: #e7f6ee; color: var(--good); }
+.badge.status-open { background: #fdeee0; color: var(--warn); }
+
+/* 依捷運站分群/附近案件/已標記案件現在會混著顯示本月+上月抽查案件，這個小標籤跟地圖上
+   上月案件用的深藍色（--accent-dark）呼應，讓使用者一眼認出哪些列是上月抽查的 */
+.lastmonth-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent-dark);
+  color: #fff;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+#map {
+  height: 520px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+/* 點案件標記時，原本 Leaflet 的預設彈出視窗會直接蓋在點位正上方，把附近地圖資訊擋住。
+   改成固定顯示在地圖右上角的資訊卡，另外用一條畫在地圖上方的箭頭線指回實際點位，
+   這樣資訊卡不會擋到點位周邊的地圖內容，見 map.js 的 showMarkerInfo() */
+#mapWrap { position: relative; }
+#leaderLineSvg {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 500;
+  display: none;
+}
+#leaderLineSvg.visible { display: block; }
+#leaderLine { stroke: var(--accent); stroke-width: 2.5; }
+.marker-info-panel {
+  display: none;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 300px;
+  max-width: calc(100% - 28px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  padding: 12px 30px 12px 14px;
+  z-index: 501;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.marker-info-panel.visible { display: block; }
+.marker-info-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: none;
+  font-size: 15px;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 1;
+  padding: 4px;
+}
+.marker-info-close:hover { color: var(--ink); }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.legend .item { display: flex; align-items: center; gap: 5px; }
+.legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+.station-item {
+  font-size: 12px;
+  padding: 5px 4px;
+  border-bottom: 1px dashed #eee;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.station-item:hover { background: var(--row-hover); }
+.station-item .case-id {
+  font-family: "Consolas", monospace;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0 4px;
+}
+
+.station-group {
+  margin-bottom: 10px;
+  padding: 0 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+/* 水平留白搬到 summary 自己身上，不要放在 .station-group 上——
+   不然裡面的 <table> 跟外面獨立的表頭那份表格，兩邊算 100% 寬度時基準不一樣（少了左右各 10px），
+   欄位就對不齊了。表頭表格跟每個站群的表格現在都是直接吃滿 .station-group 的內容寬度，欄寬才會一致 */
+.station-group-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 10px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  user-select: none;
+}
+.station-group-summary::-webkit-details-marker { display: none; }
+.station-group-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--accent);
+  transition: transform 0.15s;
+}
+.station-group[open] .station-group-summary::before { transform: rotate(90deg); }
+.station-group[open] .station-group-summary { border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+
+/* 附近案件是固定寬度的窄側欄，放不下原本設計給整頁寬度用的固定像素格線欄位，
+   改成一列兩行的卡片式排版（上排：項目/距離/♡，下排：編號+地址），不用對齊欄位，
+   寬度多窄都能正常換行，不會撐爆側欄 */
+.mrt-row {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed #eee;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.mrt-row:hover { background: var(--row-hover); }
+.mrt-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mrt-row-top .badge { flex: 1 1 auto; min-width: 0; }
+.mrt-row-distance {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mrt-row-top .heart-btn { flex: 0 0 auto; }
+.mrt-row-addr {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: break-word;
+}
+
+/* 依捷運站分群改用跟案件清單一樣的 <table> + <colgroup>（不是 CSS grid）：grid 的話每一列
+   （.case-row）各自 display:grid，等於每一列是獨立的格線容器，欄寬各自依那一列自己的內容
+   決定，列跟列之間完全不保證對齊，實測過會歪七扭八。table 天生所有列共用同一套欄寬，
+   不會有這個問題。每個站群各自一個 <table>（要放進各自的 <details> 收合），但全部套同一份
+   colgroup 比例（見 app.js 的 STATION_COLGROUP），所以看起來還是對齊的 */
+table.case-table tr.case-row { cursor: pointer; }
+/* 「NNN 公尺」包一層 .dist-value 鎖 nowrap，「公」「尺」兩個中文字之間才不會被瀏覽器的
+   CJK 斷行規則（預設允許在任意兩個中文字之間換行）拆開，變成一行一個字的超高列。
+   （踩過的坑：一開始只在數字跟「公尺」之間插 &nbsp;，以為這樣就不會拆開，結果「公」「尺」
+   中間仍然照 CJK 規則各自斷行——&nbsp; 只鎖它左右緊鄰那一個斷點，要整段都不能拆才要用
+   span 包起來鎖 nowrap） */
+.distance-cell { color: var(--muted); }
+.dist-value { white-space: nowrap; }
+.mrt-row.near-station {
+  background: #e6f7ee;
+  box-shadow: inset 3px 0 0 0 var(--good);
+}
+.mrt-row.near-station:hover { background: #d5f1e2; }
+/* box-shadow 在 <tr> 上不同瀏覽器支援度不一致，改套在 td 上比較可靠 */
+tr.case-row.near-station td {
+  background: #e6f7ee;
+  box-shadow: inset 3px 0 0 0 var(--good);
+}
+tr.case-row.near-station:hover td { background: #d5f1e2; }
+.near-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #e6f7ee;
+  box-shadow: inset 2px 0 0 0 var(--good);
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+/* .heart-cell 用在 CSS grid 的列（分群清單/路線清單）時本身就是 div，flex 沒問題；
+   案件清單表格那邊改成 <td class="heart-td"><div class="heart-cell">...</div></td>——
+   絕對不能讓 <td> 自己 display:flex（同一個坑踩了兩次：flex 會把 td 拉出表格版面計算，
+   不再跟同一列的其他格一起算列高，造成分隔線對不齊） */
+table.case-table td.heart-td { vertical-align: middle; }
+.heart-cell { display: flex; justify-content: center; align-items: center; gap: 6px; }
+.heart-btn {
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* 「暫時否決、不列入抽查考量」：跟 ♡ 標記路線一樣是獨立的顯示層標記，不影響篩選/地圖/路線規劃。
+   預設很淡幾乎看不到（隱藏功能，不搶版面），滑鼠移過去才看得清楚，按下去才變醒目 */
+.reject-btn {
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.15;
+}
+.reject-btn:hover { opacity: 0.6; }
+.reject-btn.rejected { opacity: 1; }
+.mrt-row-top .reject-btn { flex: 0 0 auto; }
+
+/* 「已標記案件」清單裡的 📌，鎖定某案件為「最後一站」（規劃路線時固定排最後，其餘案件仍自動排最短路徑）。
+   跟 .reject-btn 一樣預設淡化不搶版面，鎖定後變醒目並加淺色底提示 */
+table.case-table td.lock-td { vertical-align: middle; text-align: center; }
+.lock-btn {
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.25;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.lock-btn:hover { opacity: 0.7; }
+.lock-btn.locked { opacity: 1; background: #fff3d6; }
+
+/* 背景變白、文字變淺灰，跟其他列明顯區分；用 !important 蓋掉 near-station 的綠色底、
+   斑馬紋/hover 底色等既有樣式，否決狀態的視覺優先權最高 */
+tr.row-rejected td, tr.row-rejected td *,
+.mrt-row.row-rejected, .mrt-row.row-rejected * {
+  background: #fff !important;
+  color: #bbb !important;
+  box-shadow: none !important;
+}
+tr.row-rejected .reject-btn, .mrt-row.row-rejected .reject-btn { opacity: 1; }
+tr.row-rejected:hover td, .mrt-row.row-rejected:hover { background: #fafafa !important; }
+
+/* 使用者要求路線規劃的案件資訊要跟案件清單一樣有案件內容（含案件處理），加了第 5 欄；
+   後來又加了 ♡ 可以直接在這裡取消標記，變成第 6 欄。跟依捷運站分群踩過的坑不同，這裡每一列
+   的欄寬都是寫死的固定值（不是依內容自動撐開），所以還是可以放心用 display:grid
+   （每列各自算，但欄寬設定完全一樣，天生就會對齊） */
+.route-row {
+  display: grid;
+  grid-template-columns: 30px 190px 100px 180px 1fr 30px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed #eee;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.route-row:hover { background: var(--row-hover); }
+.route-row[draggable="true"] .route-step { cursor: grab; }
+.route-row.dragging { opacity: 0.4; }
+.route-row.drag-over-top { box-shadow: inset 0 2px 0 0 var(--accent-dark); }
+.route-row.drag-over-bottom { box-shadow: inset 0 -2px 0 0 var(--accent-dark); }
+.route-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+}
+.route-leg {
+  padding: 1px 8px 1px 48px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.route-stop-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e0672a;
+  color: #fff;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.route-start-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--good);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+tr.flash-highlight td, .mrt-row.flash-highlight, .route-row.flash-highlight {
+  background: #cfe8ff !important;
+  box-shadow: inset 4px 0 0 0 #1d6fd6;
+  animation: flash-pulse 0.5s ease-in-out 3;
+}
+@keyframes flash-pulse {
+  0%, 100% { background-color: #cfe8ff; }
+  50% { background-color: #7cb8f5; }
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.progress-line {
+  font-size: 12px;
+  color: var(--accent-dark);
+  margin-top: 6px;
+  min-height: 16px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted);
+}
+
+footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 20px;
+}
+
+.count-pill {
+  background: #fff;
+  color: var(--accent-dark);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}

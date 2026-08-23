@@ -1,0 +1,14 @@
+# 真實案件資料，不應公開（xlsx 匯出檔、CSV 匯出結果）
+*.xlsx
+*.csv
+
+# 舊版程式碼備份、開發工具設定，跟部署出去的網站無關
+_backup_before_drag_reorder/
+.claude/
+
+# 一次性 GIS 原始資料，只用於人工產出 mrt_stations.json，執行期不需要
+臺北市寬度超過8公尺道路GIS圖層為SHP檔案格式所採用座標系統為TWD97/
+臺北都會區大眾捷運系統車站點位圖.json
+
+# 暫存筆記檔
+新文字文件.txt
