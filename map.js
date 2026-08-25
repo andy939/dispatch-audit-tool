@@ -8,6 +8,7 @@
   const LS_ROUTE = "dispatch_route_v1"; // 主視窗規劃好的路線 (依訪查順序排列的案件編號)
   const LS_SETTINGS = "dispatch_settings_v1"; // 地理編碼設定 (Google API 金鑰、服務選擇)，主視窗設定完會透過這個 key 同步過來
   const LS_REJECTED = "dispatch_rejected_v1"; // 主視窗標記「暫時否決」的案件，這裡同步過來把點位淡化顯示
+  const LS_MARKED = "dispatch_marked_v1"; // 標記要排路線的案件；資訊卡的 ❤️ 也能直接改，跟主視窗雙向同步
   const LS_LASTMONTH_CASES = "dispatch_lastmonth_view_v1"; // 「上月抽查管理」合併後的清單，主視窗單向廣播過來，這裡只讀不寫
 
   // 使用者要求參考 Google 地圖的配色風格；Google 地圖本身的圖標配色沒有公開對外的固定色碼表，
@@ -24,6 +25,7 @@
   let cases = [];
   let geocache = {};
   let rejected = new Set();
+  let marked = new Set();
   let lastMonthCases = [];
 
   let map, mrtLayer, caseLayer, routeLayer;
@@ -156,7 +158,22 @@
     try { cases = JSON.parse(localStorage.getItem(LS_CASES) || "[]"); } catch (e) { cases = []; }
     try { geocache = JSON.parse(localStorage.getItem(LS_GEOCACHE) || "{}"); } catch (e) { geocache = {}; }
     try { rejected = new Set(JSON.parse(localStorage.getItem(LS_REJECTED) || "[]")); } catch (e) { rejected = new Set(); }
+    try { marked = new Set(JSON.parse(localStorage.getItem(LS_MARKED) || "[]")); } catch (e) { marked = new Set(); }
     try { lastMonthCases = JSON.parse(localStorage.getItem(LS_LASTMONTH_CASES) || "[]"); } catch (e) { lastMonthCases = []; }
+  }
+
+  // 資訊卡的 ❤️／🚫 直接在地圖上改，不用切回主視窗——跟主視窗的 toggleMarked()/toggleRejected() 是
+  // 各自獨立的兩份程式碼（不同視窗、不能互相呼叫函式），但寫的是同一組 localStorage key，
+  // 主視窗會透過 'storage' 事件收到通知並重畫（見 app.js 的監聽器）
+  function toggleMarkedFromMap(id) {
+    if (marked.has(id)) marked.delete(id); else marked.add(id);
+    localStorage.setItem(LS_MARKED, JSON.stringify(Array.from(marked)));
+    plotFromCache(false); // 重畫才能更新資訊卡裡的 ❤️/🤍 圖示；不重新 fitBounds
+  }
+  function toggleRejectedFromMap(id) {
+    if (rejected.has(id)) rejected.delete(id); else rejected.add(id);
+    localStorage.setItem(LS_REJECTED, JSON.stringify(Array.from(rejected)));
+    plotFromCache(false); // 否決狀態影響點位淡化樣式跟資訊卡文字，都要重畫
   }
 
   function persistGeocache() {
@@ -386,10 +403,16 @@
   let activeInfoMarker = null;
   function showMarkerInfo(marker) {
     activeInfoMarker = marker;
-    document.getElementById("markerInfoContent").innerHTML = marker._infoHtml || "";
+    const content = document.getElementById("markerInfoContent");
+    content.innerHTML = marker._infoHtml || "";
     document.getElementById("markerInfoPanel").classList.add("visible");
     document.getElementById("leaderLineSvg").classList.add("visible");
     updateLeaderLine();
+    // innerHTML 整段換掉了，舊的按鈕監聽器（如果有）已經失效，每次顯示資訊卡都要重新綁一次
+    const heartBtn = content.querySelector(".heart-btn");
+    if (heartBtn) heartBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleMarkedFromMap(heartBtn.dataset.caseId); });
+    const rejectBtn = content.querySelector(".reject-btn");
+    if (rejectBtn) rejectBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleRejectedFromMap(rejectBtn.dataset.caseId); });
   }
   function hideMarkerInfo() {
     activeInfoMarker = null;
@@ -470,7 +493,12 @@
         dashArray: isRejected ? null : (isLastMonth ? "5,3" : (loc.approx ? "2,2" : null)),
       }).addTo(caseLayer);
       marker._caseId = c.id;
-      marker._infoHtml = `<b>${escapeHtml(c.category)}</b><br>案件編號：${escapeHtml(c.id)}<br>${escapeHtml(c.address)}<br>${escapeHtml(c.content).slice(0, 60)}${approxNote}${rejectedNote}${lastMonthNote}`;
+      const isMarked = marked.has(c.id);
+      marker._infoHtml = `<b>${escapeHtml(c.category)}</b><br>案件編號：${escapeHtml(c.id)}<br>${escapeHtml(c.address)}<br>${escapeHtml(c.content).slice(0, 60)}${approxNote}${rejectedNote}${lastMonthNote}
+        <div class="marker-info-actions">
+          <span class="heart-btn${isMarked ? " marked" : ""}" data-case-id="${escapeHtml(c.id)}" title="標記／取消標記要排路線">${isMarked ? "❤️" : "🤍"}</span>
+          <span class="reject-btn${isRejected ? " rejected" : ""}" data-case-id="${escapeHtml(c.id)}" title="暫時否決／取消否決">🚫</span>
+        </div>`;
       marker.on("click", () => { notifyFocusFromMap(c.id); showMarkerInfo(marker); });
       markersById.set(c.id, marker);
       bounds.push([loc.lat, loc.lng]);
@@ -676,9 +704,9 @@
       plotFromCache();
       drawRoute();
       geocodeAllCases({ silent: true });
-    } else if (e.key === LS_REJECTED) {
+    } else if (e.key === LS_REJECTED || e.key === LS_MARKED) {
       loadFromStorage();
-      plotFromCache(false); // 只是否決狀態的樣式變化，座標沒變，不要連動 zoom/平移
+      plotFromCache(false); // 只是否決/標記狀態的樣式變化，座標沒變，不要連動 zoom/平移
     } else if (e.key === LS_FOCUS) {
       handleFocusRequest();
     } else if (e.key === LS_ROUTE) {

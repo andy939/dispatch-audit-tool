@@ -4,6 +4,7 @@
 
 # 舊版程式碼備份、開發工具設定，跟部署出去的網站無關
 _backup_before_drag_reorder/
+_backup_before_report_feature/
 .claude/
 
 # 一次性 GIS 原始資料，只用於人工產出 mrt_stations.json，執行期不需要

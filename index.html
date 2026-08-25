@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>派工案件抽查規劃工具</title>
-<link rel="stylesheet" href="style.css?v=69">
+<link rel="stylesheet" href="style.css?v=71">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
-<script src="data.js?v=69"></script>
+<script src="data.js?v=71"></script>
 </head>
 <body>
 
@@ -28,6 +28,7 @@
     <button class="side-nav-item" data-tab="lastmonth">📋 上月抽查管理</button>
     <button class="side-nav-item" data-tab="station">🚇 依捷運站分群</button>
     <button class="side-nav-item" data-tab="route">🚩 路線規劃</button>
+    <button class="side-nav-item" data-tab="report">📄 自動更新報告</button>
   </nav>
 
   <main class="content-area">
@@ -271,11 +272,47 @@
       </div>
     </section>
 
+    <section class="tab-panel" data-tab-panel="report">
+      <section class="panel">
+        <h2>📄 自動更新報告</h2>
+        <div class="hint">選擇月報範本、該行政區的查訪路線 Word 檔、跟照片資料夾（照片檔名要是案件編號），會自動比對照片找出剛好 5 個要更新的案件（4 本月抽查＋1 上月複查），填入案號／查證日期（照片 EXIF 拍攝日期）／項目／機關／簡化地址／照片。查證內容中間的實際觀察描述留白讓您自己填，其他維持範本原有格式不動。<br>只會產生一份新檔案下載，<b>不會覆蓋原始範本</b>。</div>
+        <div class="toolbar" style="margin-top:10px">
+          <input type="file" id="reportFileInput" accept=".docx" style="display:none">
+          <button class="secondary" id="btnChooseReportFile">選擇月報範本 docx</button>
+          <span class="hint" id="reportFileStatus" style="margin:0"></span>
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <input type="file" id="reportRouteInput" accept=".docx" style="display:none">
+          <button class="secondary" id="btnChooseReportRoute">選擇查訪路線 docx</button>
+          <span class="hint" id="reportRouteStatus" style="margin:0"></span>
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <input type="file" id="reportPhotosInput" webkitdirectory multiple style="display:none">
+          <button class="secondary" id="btnChooseReportPhotos">選擇照片資料夾</button>
+          <span class="hint" id="reportPhotosStatus" style="margin:0"></span>
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <select id="reportDistrict">
+            <option value="">請選擇行政區</option>
+          </select>
+          <input type="text" id="reportDateOverride" placeholder="查證日期備援 M/D（照片有 EXIF 拍攝日期時不用填）" style="width:280px">
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <button id="btnReportPreview">👁️ 預覽</button>
+          <button id="btnReportGenerate">📄 產生報告並下載</button>
+          <span class="hint" id="reportStatus" style="margin:0"></span>
+        </div>
+        <div id="reportPreview" style="margin-top:12px"></div>
+      </section>
+    </section>
+
   </main>
 </div>
 
 <footer>資料僅存於本機瀏覽器 (localStorage)，未上傳任何伺服器。地圖已移至獨立視窗（右上角「開啟地圖視窗」），會自動同步這裡匯入的全部案件。每月請重新匯入最新 xlsx 案件檔。</footer>
 
-<script src="app.js?v=69"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js?v=71"></script>
+<script src="report.js?v=71"></script>
 </body>
 </html>

@@ -1859,6 +1859,16 @@
         const req = JSON.parse(e.newValue || "null");
         if (req && req.id) { revealCaseByOrigin(req.id); renderNearbyPanel(req.id); }
       } catch (err) {}
+    } else if (e.key === LS_MARKED) {
+      // 使用者現在也可以直接在地圖的資訊卡按 ❤️，主視窗這邊要跟著重畫（案件清單/分群/已標記清單的圖示跟筆數）
+      try { state.marked = new Set(JSON.parse(localStorage.getItem(LS_MARKED) || "[]")); } catch (err) { state.marked = new Set(); }
+      renderAll();
+      renderLastMonthPanel();
+    } else if (e.key === LS_REJECTED) {
+      // 同樣道理：地圖資訊卡按 🚫 否決，主視窗清單也要跟著淡化對應那幾列
+      try { state.rejected = new Set(JSON.parse(localStorage.getItem(LS_REJECTED) || "[]")); } catch (err) { state.rejected = new Set(); }
+      renderAll();
+      renderLastMonthPanel();
     }
   });
 

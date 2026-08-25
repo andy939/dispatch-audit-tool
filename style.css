@@ -443,6 +443,10 @@ td.addr-cell-wrap {
   padding: 4px;
 }
 .marker-info-close:hover { color: var(--ink); }
+/* 資訊卡裡的 ❤️/🚫，跟主視窗案件清單同一套 .heart-btn/.reject-btn 樣式，讓使用者不用切回主視窗
+   就能直接在地圖上標記要排路線的案件、或標記暫時否決 */
+.marker-info-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.marker-info-actions .heart-btn, .marker-info-actions .reject-btn { font-size: 17px; }
 
 .legend {
   display: flex;
