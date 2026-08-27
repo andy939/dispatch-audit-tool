@@ -1197,7 +1197,58 @@
     return state.cases.filter((c) => state.marked.has(c.id) && isAutoExcludeCase(c, cutoff));
   }
 
+  // 案件項目名稱在這個窄欄位裡截斷用 8 字（比案件清單徽章的 10 字上限更短），單位是「中文字數」，
+  // 不是 byte，直接用 JS 字串長度算（中文字在 JS 裡一個字算一個 length，跟 Python 的 len() 一樣）
+  function truncateCategoryShort(name) {
+    const s = name || "";
+    return s.length > 8 ? s.slice(0, 8) + "…" : s;
+  }
+
+  // 依案件項目分類列出某個案件清單裡已標記(♡)的筆數／該項目在這份清單裡的總筆數，
+  // 用量高的排前面；沒有標記到的項目不列（使用者要求「有選到的案件類別都放上去」，不是固定清單）
+  function summarizeMarkedByCategory(cases) {
+    const totalByCategory = new Map();
+    cases.forEach((c) => totalByCategory.set(c.category, (totalByCategory.get(c.category) || 0) + 1));
+    const markedByCategory = new Map();
+    cases.forEach((c) => {
+      if (!state.marked.has(c.id)) return;
+      markedByCategory.set(c.category, (markedByCategory.get(c.category) || 0) + 1);
+    });
+    return Array.from(markedByCategory.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([category, count]) => ({ category, count, total: totalByCategory.get(category) || count }));
+  }
+
+  function summaryRowsHtml(rows) {
+    return rows.map(({ category, count, total }) => `
+      <div class="side-nav-summary-row" title="${escapeHtml(category)}">
+        <span>${escapeHtml(truncateCategoryShort(category))}</span>
+        <span class="count">${count}筆/${total}筆</span>
+      </div>`).join("");
+  }
+
+  // 左側選單下方的「已選」摘要：不管目前切到哪個頁籤都看得到。使用者要求分成「抽查」（本月
+  // 案件，state.cases）跟「複查」（上月抽查案件，getLastMonthCases()）兩組各自統計，跟報告
+  // 自動更新功能裡「本月4筆抽查＋上月1筆複查」的既有用語一致，不是混在一起算
+  function renderSideNavMarkedSummary() {
+    const el = document.getElementById("sideNavMarkedSummary");
+    if (!el) return;
+    const thisMonthRows = summarizeMarkedByCategory(state.cases);
+    const lastMonthRows = summarizeMarkedByCategory(getLastMonthCases());
+    if (!thisMonthRows.length && !lastMonthRows.length) { el.innerHTML = ""; return; }
+
+    let html = `<div class="side-nav-summary-title">已選</div>`;
+    if (thisMonthRows.length) {
+      html += `<div class="side-nav-summary-group">抽查</div>` + summaryRowsHtml(thisMonthRows);
+    }
+    if (lastMonthRows.length) {
+      html += `<div class="side-nav-summary-group">複查</div>` + summaryRowsHtml(lastMonthRows);
+    }
+    el.innerHTML = html;
+  }
+
   function renderMarkedList() {
+    renderSideNavMarkedSummary();
     const el = document.getElementById("markedListPanel");
     if (!el) return; // 頁籤還沒切換過去、DOM 還沒建立時，其他地方呼叫 toggleMarked() 不用管這裡
     const hintEl = document.getElementById("markedListHint");

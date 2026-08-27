@@ -94,6 +94,44 @@ header.topbar .sub {
 .side-nav-item:hover { background: var(--row-hover); }
 .side-nav-item.active { background: var(--accent); color: #fff; }
 
+/* 左側選單下方的「已選擇」摘要：不管目前在哪個頁籤，隨時看得到已標記(♡)案件依項目分了幾類、
+   各幾筆，不用切去路線規劃頁籤才看得到。案件項目名稱在這裡空間窄，另外用比案件清單徽章（10字）
+   更短的 8 字上限截斷，避免太長把數字擠出視野或整行換行 */
+.side-nav-summary {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.side-nav-summary-title {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.side-nav-summary-group {
+  font-size: 11px;
+  color: var(--accent-dark);
+  font-weight: 600;
+  margin-top: 4px;
+}
+.side-nav-summary-group:first-of-type { margin-top: 0; }
+.side-nav-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.side-nav-summary-row .count {
+  color: var(--muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 .content-area {
   flex: 1;
   min-width: 0;

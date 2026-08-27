@@ -11,8 +11,10 @@
   const R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
   const CASE_ID_RE = /^\d{13}$/;
-  const STOP_HEADER_RE = /^\d+\.\s*案件編號：(\d{13})(（上月抽查）)?\s*承辦機關：([^\s　]+)/;
   const TRAILING_ROAD_RE = /\(([^()]+)\)\s*$/;
+  const LS_CASES = "dispatch_cases_v1";
+  const LS_LASTMONTH_FULL = "dispatch_lastmonth_full_v1";
+  const LS_LASTMONTH_AUDIT = "dispatch_lastmonth_audit_v1";
 
   // 案件項目 -> 查證內容中間那句觀察描述的固定說法，跟 update_audit_report.py 的
   // CATEGORY_PHRASES 是同一份對照表（從 D:\派工抽查 底下 18 份過去幾個月的真實抽查報告，
@@ -75,49 +77,31 @@
     return { text: candidate, lowConfidence };
   }
 
-  // ---------- 路線文件解析（查訪路線_YYYYMMDD_HHMM{district}.docx，工具本身匯出的格式） ----------
-  function parseRouteParagraphs(paragraphs) {
-    const stops = [];
-    let cur = null;
-    for (const raw of paragraphs) {
-      const line = raw.trim();
-      if (!line) continue;
-      const m = line.match(STOP_HEADER_RE);
-      if (m) {
-        if (cur) stops.push(cur);
-        cur = {
-          id: m[1], isLastMonth: !!m[2], agency: m[3],
-          category: "", addressRaw: "", content: "", handling: "",
-          order: stops.length + 1,
-        };
-        continue;
-      }
-      if (!cur) continue;
-      if (line.startsWith("項目：")) cur.category = line.slice(3).trim();
-      else if (line.startsWith("地址：")) cur.addressRaw = line.slice(3).trim();
-      else if (line.startsWith("內容：")) cur.content = (cur.content + " " + line.slice(3).trim()).trim();
-      else if (line.startsWith("處理：")) cur.handling = (cur.handling + " " + line.slice(3).trim()).trim();
-      else if (cur.content && !cur.handling) cur.content += " " + line;
-    }
-    if (cur) stops.push(cur);
-    return stops;
-  }
-
-  function parseExportDate(paragraphs) {
-    for (const p of paragraphs) {
-      const m = p.match(/匯出日期：(\d{4})-(\d{2})-(\d{2})/);
-      if (m) return { y: +m[1], m: +m[2], d: +m[3] };
-    }
-    return null;
-  }
-
-  async function parseRouteDocx(file) {
-    const buf = await file.arrayBuffer();
-    const zip = await JSZip.loadAsync(buf);
-    const xmlStr = await zip.file("word/document.xml").async("string");
-    const doc = new DOMParser().parseFromString(xmlStr, "application/xml");
-    const paragraphs = descendantsNS(doc.documentElement, W_NS, "p").map(paragraphText);
-    return { stops: parseRouteParagraphs(paragraphs), exportDate: parseExportDate(paragraphs) };
+  // ---------- 直接讀工具本身已匯入的案件資料（本月 state.cases／上月抽查 getLastMonthCases()），
+  // 不需要另外匯出/選一份查訪路線 docx 當中介——查訪路線文件的「地址」欄位本來就只是原封不動印出
+  // c.address 加「台北市」前綴而已（見 app.js 匯出 Word 那段），並沒有比案件資料本身更多的資訊，
+  // 繞一圈用 Word 文字反解析（regex 對付排版、換行）純粹是多一層失真風險，不如直接讀。
+  // report.js 是獨立的 IIFE，不能直接呼叫 app.js 內部的 state／getLastMonthCases()（不同函式作用域），
+  // 所以這裡直接讀同一組 localStorage key、自己重算一次上月合併邏輯（跟 app.js 的 getLastMonthCases()
+  // 對照：這裡用未加「抽」前綴的原始 id，因為要拿去跟照片檔名比對，過濾掉字首前綴的問題）
+  function loadAppCaseData() {
+    let thisMonth = [];
+    try { thisMonth = JSON.parse(localStorage.getItem(LS_CASES) || "[]"); } catch (e) {}
+    let fullList = [], auditList = [];
+    try { fullList = JSON.parse(localStorage.getItem(LS_LASTMONTH_FULL) || "[]"); } catch (e) {}
+    try { auditList = JSON.parse(localStorage.getItem(LS_LASTMONTH_AUDIT) || "[]"); } catch (e) {}
+    const fullById = new Map(fullList.map((c) => [c.id, c]));
+    const lastMonth = auditList.map((a) => {
+      const full = fullById.get(a.id);
+      return {
+        id: a.id,
+        category: a.category || (full && full.category) || "",
+        district: a.district || (full && full.district) || "",
+        agency: full ? full.agency : "",
+        address: full ? full.address : "",
+      };
+    });
+    return { thisMonth, lastMonth };
   }
 
   // ---------- 照片 EXIF 拍攝日期（手動解析 JPEG APP1/Exif 區段，只抓 DateTimeOriginal/DateTime） ----------
@@ -359,9 +343,8 @@
   }
 
   // ---------- 主流程：跟 update_audit_report.py 的 build_report() 逐項對應 ----------
-  async function buildReport({ reportFile, routeFile, photoFiles, district, dateOverride, dryRun }) {
-    const { stops, exportDate } = await parseRouteDocx(routeFile);
-    const fallbackDate = dateOverride || (exportDate ? `${exportDate.m}/${exportDate.d}` : null);
+  async function buildReport({ reportFile, photoFiles, district, dateOverride, dryRun }) {
+    const fallbackDate = dateOverride || null;
 
     const photoByStem = {};
     for (const f of photoFiles) {
@@ -369,19 +352,27 @@
       if (CASE_ID_RE.test(stem)) photoByStem[stem] = f;
     }
 
-    const matched = stops.filter((s) => photoByStem[s.id]);
+    const { thisMonth, lastMonth } = loadAppCaseData();
+    const districtName = `${district}區`;
+    const fresh = thisMonth
+      .filter((c) => c.district === districtName && photoByStem[c.id])
+      .map((c) => ({ ...c, isLastMonth: false }));
+    const recheck = lastMonth
+      .filter((c) => c.district === districtName && photoByStem[c.id])
+      .map((c) => ({ ...c, isLastMonth: true }));
+    // 使用者要求錯誤訊息不用解釋原因、不用給建議，一句話講完就好
+    const matched = fresh.concat(recheck);
     if (matched.length !== 5) {
       throw new ReportError(
-        `照片資料夾裡符合路線案件編號的照片有 ${matched.length} 張，需要剛好 5 張才能繼續。` +
-        (matched.length ? `目前符合的案件：${matched.map((s) => s.id).join(", ")}` : "")
+        matched.length === 0
+          ? "你選擇的照片找不到對應的案件編號。"
+          : `符合的案件只有 ${matched.length} 筆，需要剛好 5 筆（${matched.map((s) => s.id).join("、")}）。`
       );
     }
-    const recheck = matched.filter((s) => s.isLastMonth);
-    const fresh = matched.filter((s) => !s.isLastMonth);
     if (recheck.length !== 1 || fresh.length !== 4) {
-      throw new ReportError(`需要剛好 1 筆「上月抽查」＋4 筆「本月」，目前是 ${recheck.length} 筆上月 + ${fresh.length} 筆本月。`);
+      throw new ReportError(`需要剛好 4 筆本月＋1 筆上月，目前是 ${fresh.length} 筆本月＋${recheck.length} 筆上月。`);
     }
-    fresh.sort((a, b) => a.order - b.order);
+    fresh.sort((a, b) => a.id.localeCompare(b.id));
     const rowsData = fresh.concat(recheck); // 第1~4列＝本月抽查，第5列＝上月複查
 
     const reportBuf = await reportFile.arrayBuffer();
@@ -407,7 +398,7 @@
     const preview = [];
     for (let i = 0; i < rowsData.length; i++) {
       const s = rowsData[i];
-      const { text: addr, lowConfidence } = simplifyAddress(s.addressRaw);
+      const { text: addr, lowConfidence } = simplifyAddress(s.address);
       const stage = s.isLastMonth ? "複查" : "抽查";
       const closing = s.isLastMonth ? "，權責機關確已完成案件處理及抽查作業。" : "，權責機關確依限完成案件處理作業。";
       const contentLine2 = `經實地查證，${buildVerificationPhrase(s.category)}` + closing;
@@ -416,7 +407,7 @@
       preview.push({
         row: i + 1, id: s.id, stage, category: s.category, agency: s.agency,
         date: dateMd, address: addr, addressLowConfidence: lowConfidence,
-        addressRaw: s.addressRaw, photoName: photoByStem[s.id].name,
+        addressRaw: s.address, photoName: photoByStem[s.id].name,
       });
 
       if (dryRun) continue;
@@ -443,13 +434,13 @@
   function ReportError(message) { this.message = message; this.name = "ReportError"; }
   ReportError.prototype = Object.create(Error.prototype);
 
-  window.AuditReportModule = { buildReport, simplifyAddress, parseRouteDocx, photoExifDate, ReportError };
+  window.AuditReportModule = { buildReport, simplifyAddress, loadAppCaseData, photoExifDate, ReportError };
 
   // ---------- UI ----------
   const KNOWN_DISTRICTS = ["中正", "萬華", "松山", "信義", "大安", "文山", "中山", "大同", "士林", "北投", "內湖", "南港"];
 
-  function guessDistrict(filename) {
-    return KNOWN_DISTRICTS.find((d) => filename.includes(d)) || "";
+  function guessDistrict(text) {
+    return KNOWN_DISTRICTS.find((d) => text.includes(d)) || "";
   }
 
   function pad2(n) { return String(n).padStart(2, "0"); }
@@ -482,13 +473,11 @@
     const statusEl = document.getElementById("reportStatus");
     const previewEl = document.getElementById("reportPreview");
     const reportInput = document.getElementById("reportFileInput");
-    const routeInput = document.getElementById("reportRouteInput");
     const photosInput = document.getElementById("reportPhotosInput");
     const districtSel = document.getElementById("reportDistrict");
     const dateInput = document.getElementById("reportDateOverride");
 
     if (!reportInput.files[0]) { alert("請先選擇月報範本 docx。"); return; }
-    if (!routeInput.files[0]) { alert("請先選擇查訪路線 docx。"); return; }
     const photoFiles = Array.from(photosInput.files || []).filter((f) => /\.jpe?g$/i.test(f.name));
     if (!photoFiles.length) { alert("請先選擇照片資料夾（裡面要有以案件編號命名的 jpg 照片）。"); return; }
     if (!districtSel.value) { alert("請選擇行政區。"); return; }
@@ -498,7 +487,6 @@
     try {
       const result = await window.AuditReportModule.buildReport({
         reportFile: reportInput.files[0],
-        routeFile: routeInput.files[0],
         photoFiles,
         district: districtSel.value,
         dateOverride: dateInput.value.trim() || null,
@@ -539,9 +527,9 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    const routeInput = document.getElementById("reportRouteInput");
+    const photosInput = document.getElementById("reportPhotosInput");
     const districtSel = document.getElementById("reportDistrict");
-    if (!routeInput || !districtSel) return; // 這個頁籤還沒建立在畫面上（理論上不會發生，防禦性檢查）
+    if (!photosInput || !districtSel) return; // 這個頁籤還沒建立在畫面上（理論上不會發生，防禦性檢查）
 
     KNOWN_DISTRICTS.forEach((d) => {
       const opt = document.createElement("option");
@@ -560,18 +548,18 @@
     }
     wireFileButton("btnChooseReportFile", "reportFileInput", "reportFileStatus",
       (files) => (files[0] ? `已選擇：${files[0].name}` : ""));
-    wireFileButton("btnChooseReportRoute", "reportRouteInput", "reportRouteStatus",
-      (files) => (files[0] ? `已選擇：${files[0].name}` : ""));
     wireFileButton("btnChooseReportPhotos", "reportPhotosInput", "reportPhotosStatus",
       (files) => {
         const jpgs = Array.from(files).filter((f) => /\.jpe?g$/i.test(f.name));
         return jpgs.length ? `已選擇資料夾，找到 ${jpgs.length} 張 jpg 照片` : "資料夾裡沒有找到 jpg 照片";
       });
 
-    routeInput.addEventListener("change", () => {
-      const f = routeInput.files[0];
-      if (f) {
-        const guess = guessDistrict(f.name);
+    // 沒有查訪路線檔名可以猜行政區了，改用照片資料夾的路徑（webkitdirectory 選資料夾時，每個檔案的
+    // webkitRelativePath 會包含選到的資料夾名稱，例如「11508 士林/抽查照片/xxx.jpg」）
+    photosInput.addEventListener("change", () => {
+      const f = photosInput.files[0];
+      if (f && f.webkitRelativePath) {
+        const guess = guessDistrict(f.webkitRelativePath);
         if (guess) districtSel.value = guess;
       }
     });
