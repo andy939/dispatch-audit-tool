@@ -28,6 +28,36 @@ from docx.shared import Cm
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+# 案件項目 -> 查證內容中間那句觀察描述的固定說法。使用者確認「抽查照片基本上都是通過的」，
+# 所以查證內容其實有固定格式跟說法，不是每筆都要重新想；這份對照表不是憑空編的，是從
+# D:\派工抽查 底下 18 份過去幾個月的真實抽查報告裡，撈出將近 900 筆歷史「查證內容」欄位文字，
+# 依案件項目分組後，挑一句該類別裡出現頻率高、措辭最通用的當代表（不是隨機挑最特殊的個案描述，
+# 例如「法務部前已清除」這種太個案的描述就不用）。跟 report.js 的 CATEGORY_PHRASES 要維持一致。
+# 找不到對應項目時，退回用「{項目}已完成改善」這種通用說法（見 build_verification_phrase()）。
+CATEGORY_PHRASES = {
+    "市區道路坑洞處理": "道路坑洞已臨補",
+    "交通號誌異常": "行車號誌已正常運作",
+    "路燈不亮或損壞": "路燈已正常放亮",
+    "路樹處理": "路樹已修剪",
+    "交通標誌及設施物損壞(含汙損)、傾斜": "反光鏡已調正",
+    "道路側溝溝蓋(含周邊)損壞遺失": "側溝溝蓋已修復固定",
+    "道路散落物或油漬處理": "路面油漬及散落物已清除",
+    "用戶無水、漏水報修": "該址已無漏水情事",
+    "交通號誌電纜線垂落及設施損壞": "號誌線路及設施已修復正常",
+    "鄰里無主垃圾清運": "該址已無垃圾",
+    "人孔蓋(含周邊)破損、遺失處理": "人孔蓋已修復固定",
+    "雨水下水道側溝清淤": "側溝已清疏",
+}
+
+
+def build_verification_phrase(category):
+    normalized = re.sub(r"\s+", "", category or "")
+    for key, phrase in CATEGORY_PHRASES.items():
+        if re.sub(r"\s+", "", key) == normalized:
+            return phrase
+    return f"{category}已完成改善" if category else "現場已完成改善"
+
+
 CASE_ID_RE = re.compile(r"^\d{13}$")
 STOP_HEADER_RE = re.compile(
     r"^\d+\.\s*案件編號：(\d{13})(（上月抽查）)?\s*承辦機關：([^\s　]+)"
@@ -214,6 +244,9 @@ def build_report(report_path, route_path, photos_dir, district, out_path,
                   verify_date_md, dry_run=False):
     stops = parse_route_docx(route_path)
 
+    # 故意不遞迴掃子資料夾：使用者的照片資料夾底下常常還有一個「新增資料夾」放手機拍照的原始素材
+    # （還沒篩選、檔名也不是案件編號），只掃 --photos 直接指到的那一層，要求使用者指到真正整理好、
+    # 確定要用的那個資料夾（例如「.../11508 士林/抽查照片」），不要自己猜該不該連子資料夾一起找
     photo_files = glob.glob(os.path.join(photos_dir, "*.jpg")) + glob.glob(os.path.join(photos_dir, "*.jpeg"))
     photo_by_id = {}
     for f in photo_files:
@@ -271,7 +304,7 @@ def build_report(report_path, route_path, photos_dir, district, out_path,
         addr, low_conf = simplify_address(s["address_raw"])
         stage = "複查" if s["is_last_month"] else "抽查"
         closing = "，權責機關確已完成案件處理及抽查作業。" if s["is_last_month"] else "，權責機關確依限完成案件處理作業。"
-        content_line2 = "經實地查證，【請填查證內容】" + closing
+        content_line2 = f"經實地查證，{build_verification_phrase(s['category'])}" + closing
         date_md = row_dates[s["id"]]
 
         preview.append({

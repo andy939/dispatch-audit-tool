@@ -14,6 +14,33 @@
   const STOP_HEADER_RE = /^\d+\.\s*案件編號：(\d{13})(（上月抽查）)?\s*承辦機關：([^\s　]+)/;
   const TRAILING_ROAD_RE = /\(([^()]+)\)\s*$/;
 
+  // 案件項目 -> 查證內容中間那句觀察描述的固定說法，跟 update_audit_report.py 的
+  // CATEGORY_PHRASES 是同一份對照表（從 D:\派工抽查 底下 18 份過去幾個月的真實抽查報告，
+  // 撈出將近 900 筆歷史「查證內容」欄位文字整理出來，不是憑空編的）。兩邊要維持一致，
+  // 一邊改規則另一邊也要記得同步改。
+  const CATEGORY_PHRASES = {
+    "市區道路坑洞處理": "道路坑洞已臨補",
+    "交通號誌異常": "行車號誌已正常運作",
+    "路燈不亮或損壞": "路燈已正常放亮",
+    "路樹處理": "路樹已修剪",
+    "交通標誌及設施物損壞(含汙損)、傾斜": "反光鏡已調正",
+    "道路側溝溝蓋(含周邊)損壞遺失": "側溝溝蓋已修復固定",
+    "道路散落物或油漬處理": "路面油漬及散落物已清除",
+    "用戶無水、漏水報修": "該址已無漏水情事",
+    "交通號誌電纜線垂落及設施損壞": "號誌線路及設施已修復正常",
+    "鄰里無主垃圾清運": "該址已無垃圾",
+    "人孔蓋(含周邊)破損、遺失處理": "人孔蓋已修復固定",
+    "雨水下水道側溝清淤": "側溝已清疏",
+  };
+
+  function buildVerificationPhrase(category) {
+    const normalized = (category || "").replace(/\s+/g, "");
+    for (const key in CATEGORY_PHRASES) {
+      if (key.replace(/\s+/g, "") === normalized) return CATEGORY_PHRASES[key];
+    }
+    return category ? `${category}已完成改善` : "現場已完成改善";
+  }
+
   function directChildren(el, localName) {
     return Array.from(el.children).filter((c) => c.localName === localName);
   }
@@ -383,7 +410,7 @@
       const { text: addr, lowConfidence } = simplifyAddress(s.addressRaw);
       const stage = s.isLastMonth ? "複查" : "抽查";
       const closing = s.isLastMonth ? "，權責機關確已完成案件處理及抽查作業。" : "，權責機關確依限完成案件處理作業。";
-      const contentLine2 = "經實地查證，【請填查證內容】" + closing;
+      const contentLine2 = `經實地查證，${buildVerificationPhrase(s.category)}` + closing;
       const dateMd = rowDates[s.id];
 
       preview.push({

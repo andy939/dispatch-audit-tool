@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>派工案件抽查規劃工具</title>
-<link rel="stylesheet" href="style.css?v=71">
+<link rel="stylesheet" href="style.css?v=73">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
-<script src="data.js?v=71"></script>
+<script src="data.js?v=73"></script>
 </head>
 <body>
 
@@ -247,6 +247,7 @@
       <section class="panel">
         <h2>❤️ 已標記案件 <span class="count-hint" id="markedListHint"></span></h2>
         <div class="hint">按 ♡ 可取消標記；點案件可對應到地圖。確認名單後再到下方按「規劃路線」。</div>
+        <div class="hint" id="staleMarkedWarning" style="display:none;color:#c9821a;align-items:center;gap:10px;margin-top:6px"></div>
         <div id="markedListPanel" style="margin-top:10px"></div>
       </section>
 
@@ -275,7 +276,7 @@
     <section class="tab-panel" data-tab-panel="report">
       <section class="panel">
         <h2>📄 自動更新報告</h2>
-        <div class="hint">選擇月報範本、該行政區的查訪路線 Word 檔、跟照片資料夾（照片檔名要是案件編號），會自動比對照片找出剛好 5 個要更新的案件（4 本月抽查＋1 上月複查），填入案號／查證日期（照片 EXIF 拍攝日期）／項目／機關／簡化地址／照片。查證內容中間的實際觀察描述留白讓您自己填，其他維持範本原有格式不動。<br>只會產生一份新檔案下載，<b>不會覆蓋原始範本</b>。</div>
+        <div class="hint">選擇月報範本、該行政區的查訪路線 Word 檔、跟照片資料夾（照片檔名要是案件編號），會自動比對照片找出剛好 5 個要更新的案件（4 本月抽查＋1 上月複查），填入案號／查證日期（照片 EXIF 拍攝日期）／項目／機關／簡化地址／照片／查證內容（依案件項目套用固定說法，例如「路燈已正常放亮」，正式送出前建議自己核對一次）。<br>照片資料夾請直接選到確定要用的那一層（例如「…／抽查照片」），不要選到還有手機原始素材的上一層資料夾，不然會抓到不該用的照片。<br>只會產生一份新檔案下載，<b>不會覆蓋原始範本</b>。</div>
         <div class="toolbar" style="margin-top:10px">
           <input type="file" id="reportFileInput" accept=".docx" style="display:none">
           <button class="secondary" id="btnChooseReportFile">選擇月報範本 docx</button>
@@ -312,7 +313,7 @@
 <footer>資料僅存於本機瀏覽器 (localStorage)，未上傳任何伺服器。地圖已移至獨立視窗（右上角「開啟地圖視窗」），會自動同步這裡匯入的全部案件。每月請重新匯入最新 xlsx 案件檔。</footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="app.js?v=71"></script>
-<script src="report.js?v=71"></script>
+<script src="app.js?v=73"></script>
+<script src="report.js?v=73"></script>
 </body>
 </html>

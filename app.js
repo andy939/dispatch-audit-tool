@@ -1188,12 +1188,33 @@
   // ♡（案件清單/依捷運站分群按 ♡ 標記進來的），也可以點案件跳去地圖核對位置。這裡不需要「附近案件」
   // 側欄（已經不是在看單一案件周邊，而是在看整批要排路線的名單），所以這個頁籤沒有 nearby-embed-panel。
   // 使用者確認上月抽查案件的 ♡ 標記也要能在這裡看到、一起排進路線，跟 state.cases 合併查
+  // 使用者反映：標記完案件後可能因故（下雨、選案不合適）拖了幾天才真的出門查，這幾天內
+  // 「鄰里無主垃圾清運」「道路散落物或油漬處理」這兩項可能就超過 3 天失效了，但使用者不會
+  // 每次都想到要重新按一次「移除3天前垃圾/散落物案件」。這裡只是「提醒」，不會自動幫使用者
+  // 移除或取消標記——是否要處理、什麼時候處理，還是使用者自己決定
+  function staleMarkedGarbageCases() {
+    const cutoff = autoExcludeCutoff();
+    return state.cases.filter((c) => state.marked.has(c.id) && isAutoExcludeCase(c, cutoff));
+  }
+
   function renderMarkedList() {
     const el = document.getElementById("markedListPanel");
     if (!el) return; // 頁籤還沒切換過去、DOM 還沒建立時，其他地方呼叫 toggleMarked() 不用管這裡
     const hintEl = document.getElementById("markedListHint");
     const markedCases = state.cases.concat(getLastMonthCases()).filter((c) => state.marked.has(c.id));
     if (hintEl) hintEl.textContent = markedCases.length ? `已標記 ${markedCases.length} 筆` : "";
+
+    const staleWarningEl = document.getElementById("staleMarkedWarning");
+    if (staleWarningEl) {
+      const stale = staleMarkedGarbageCases();
+      staleWarningEl.innerHTML = stale.length
+        ? `⚠ 已標記案件裡有 ${stale.length} 筆「${AUTO_EXCLUDE_CATEGORIES.join("」「")}」已經超過 ${AUTO_EXCLUDE_DAYS} 天，建議排路線前先移除更新
+           <button class="ghost" id="btnStaleWarningRemove" style="margin:0">🗑️ 立即移除</button>`
+        : "";
+      staleWarningEl.style.display = stale.length ? "flex" : "none";
+      const btn = document.getElementById("btnStaleWarningRemove");
+      if (btn) btn.addEventListener("click", autoRemoveOldGarbageCases);
+    }
 
     if (!markedCases.length) {
       el.innerHTML = `<div class="empty-state">尚未標記任何案件，請到「本月案件管理」「上月抽查管理」或「依捷運站分群」按 ♡ 標記要排路線的案件</div>`;
