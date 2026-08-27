@@ -16,6 +16,12 @@
   const LS_LASTMONTH_FULL = "dispatch_lastmonth_full_v1";
   const LS_LASTMONTH_AUDIT = "dispatch_lastmonth_audit_v1";
 
+  // File System Access API 只有安全來源（https 或 localhost）才能用，Firefox 完全不支援，
+  // 用 file:// 直接開啟這個工具也不算安全來源——都會退回「選檔案 + 觸發下載」的舊做法
+  const supportsFsAccess = typeof window.showDirectoryPicker === "function" && window.isSecureContext;
+  let reportDirHandle = null;      // 選定的報告資料夾，之後產生報告直接寫進去，不用每次跳出存檔視窗
+  let reportTemplateHandle = null; // 資料夾裡自動抓到（或使用者從下拉選單挑）的月報範本檔案 handle
+
   // 案件項目 -> 查證內容中間那句觀察描述的固定說法，跟 update_audit_report.py 的
   // CATEGORY_PHRASES 是同一份對照表（從 D:\派工抽查 底下 18 份過去幾個月的真實抽查報告，
   // 撈出將近 900 筆歷史「查證內容」欄位文字整理出來，不是憑空編的）。兩邊要維持一致，
@@ -467,17 +473,74 @@
     return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  let lastBuildResult = null;
+  // 選好資料夾後：申請寫入權限（存回同一個資料夾要用），掃資料夾裡的 docx 找範本——
+  // 排除掉「_已更新」開頭的檔案（那是上次產生的結果，不是範本）跟 Word 開啟中的暫存鎖定檔「~$」。
+  // 剛好只有 1 個候選就直接用；有多個就列出來讓使用者自己選（例如同一個資料夾放了不只一個月的範本）
+  async function pickReportFolder() {
+    const statusEl = document.getElementById("reportFileStatus");
+    const pickSel = document.getElementById("reportTemplatePick");
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker();
+    } catch (e) {
+      return; // 使用者按取消（AbortError），不用特別提示
+    }
+    let perm = await dir.queryPermission({ mode: "readwrite" });
+    if (perm !== "granted") perm = await dir.requestPermission({ mode: "readwrite" });
+    if (perm !== "granted") {
+      statusEl.textContent = "沒有取得這個資料夾的寫入權限，沒辦法把報告存進去。";
+      return;
+    }
+    reportDirHandle = dir;
+
+    const candidates = [];
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === "file" && /\.docx$/i.test(name) && !name.includes("已更新") && !name.startsWith("~$")) {
+        candidates.push({ name, handle });
+      }
+    }
+    if (!candidates.length) {
+      statusEl.textContent = `「${dir.name}」資料夾裡找不到月報範本 docx（已排除之前產生過的「_已更新」檔案）。`;
+      reportTemplateHandle = null;
+      pickSel.style.display = "none";
+      return;
+    }
+    if (candidates.length === 1) {
+      reportTemplateHandle = candidates[0].handle;
+      pickSel.style.display = "none";
+      statusEl.textContent = `已選擇資料夾「${dir.name}」，範本：${candidates[0].name}`;
+    } else {
+      pickSel.innerHTML = "";
+      candidates.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.name; opt.textContent = c.name;
+        pickSel.appendChild(opt);
+      });
+      pickSel.style.display = "";
+      reportTemplateHandle = candidates[0].handle;
+      statusEl.textContent = `「${dir.name}」資料夾裡有 ${candidates.length} 份 docx，請從右邊選擇範本：`;
+      pickSel.onchange = () => {
+        const found = candidates.find((c) => c.name === pickSel.value);
+        reportTemplateHandle = found ? found.handle : null;
+      };
+    }
+  }
+
+  async function getReportFile() {
+    if (supportsFsAccess && reportTemplateHandle) return reportTemplateHandle.getFile();
+    const fallbackInput = document.getElementById("reportFileInputFallback");
+    return (fallbackInput && fallbackInput.files[0]) || null;
+  }
 
   async function runBuild(dryRun) {
     const statusEl = document.getElementById("reportStatus");
     const previewEl = document.getElementById("reportPreview");
-    const reportInput = document.getElementById("reportFileInput");
     const photosInput = document.getElementById("reportPhotosInput");
     const districtSel = document.getElementById("reportDistrict");
     const dateInput = document.getElementById("reportDateOverride");
 
-    if (!reportInput.files[0]) { alert("請先選擇月報範本 docx。"); return; }
+    const reportFile = await getReportFile();
+    if (!reportFile) { alert(supportsFsAccess ? "請先選擇報告資料夾。" : "請先選擇月報範本 docx。"); return; }
     const photoFiles = Array.from(photosInput.files || []).filter((f) => /\.jpe?g$/i.test(f.name));
     if (!photoFiles.length) { alert("請先選擇照片資料夾（裡面要有以案件編號命名的 jpg 照片）。"); return; }
     if (!districtSel.value) { alert("請選擇行政區。"); return; }
@@ -486,20 +549,25 @@
     previewEl.innerHTML = "";
     try {
       const result = await window.AuditReportModule.buildReport({
-        reportFile: reportInput.files[0],
+        reportFile,
         photoFiles,
         district: districtSel.value,
         dateOverride: dateInput.value.trim() || null,
         dryRun,
       });
-      lastBuildResult = dryRun ? null : result;
       let warn = "";
       if (result.distinctDates.length > 1) {
         warn = `<div class="hint" style="color:#c9821a;margin-top:6px">⚠ 這 5 張照片拍攝日期不只一天：${result.distinctDates.join("、")}，已各自照實際拍攝日期填入，請確認這是預期中的狀況。</div>`;
       }
       previewEl.innerHTML = renderPreviewTable(result.preview) + warn;
-      statusEl.textContent = dryRun ? "預覽完成（尚未產生檔案，確認沒問題後按下方「產生報告並下載」）" : "已產生報告，準備下載…";
-      if (!dryRun && result.blob) downloadResult(result.blob, reportInput.files[0].name, districtSel.value);
+      if (dryRun) {
+        statusEl.textContent = "預覽完成（尚未產生檔案，確認沒問題後按下方按鈕產生）";
+      } else if (result.blob) {
+        const saved = await saveResult(result.blob, reportFile.name, districtSel.value);
+        statusEl.textContent = saved.mode === "folder"
+          ? `已存到「${reportDirHandle.name}」資料夾：${saved.filename}`
+          : `已下載：${saved.filename}`;
+      }
     } catch (e) {
       statusEl.textContent = "";
       if (e instanceof window.AuditReportModule.ReportError) {
@@ -511,11 +579,22 @@
     }
   }
 
-  function downloadResult(blob, originalName, district) {
+  // 有 File System Access API 可用時（Chrome/Edge，且是 https 或 localhost 這種「安全來源」），
+  // 拿模板所在資料夾的 handle 直接寫檔進去，不用每次都跳出「另存新檔」視窗，也不會亂跑去下載資料夾；
+  // 不支援時（Firefox、或用 file:// 直接開啟這個工具）退回原本「觸發瀏覽器下載」的做法
+  async function saveResult(blob, originalName, district) {
     const now = new Date();
     const ts = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}_${pad2(now.getHours())}${pad2(now.getMinutes())}`;
     const base = originalName.replace(/\.docx$/i, "");
     const filename = `${base}_已更新_${district}_${ts}.docx`;
+
+    if (supportsFsAccess && reportDirHandle) {
+      const fileHandle = await reportDirHandle.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { mode: "folder", filename };
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -524,6 +603,7 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    return { mode: "download", filename };
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -537,8 +617,8 @@
       districtSel.appendChild(opt);
     });
 
-    // 「選擇...」按鈕轉發點擊到隱藏的 <input type=file>（跟資料匯入頁籤的既有按鈕/input 配對方式一樣），
-    // 選好之後在旁邊的 hint 顯示檔名/張數，讓使用者確認選對了
+    // 「選擇照片資料夾」還是維持原本「隱藏的 <input type=file webkitdirectory>」做法（跟資料匯入
+    // 頁籤的既有按鈕/input 配對方式一樣），只讀不寫，不需要 File System Access API
     function wireFileButton(btnId, inputId, statusId, describe) {
       const btn = document.getElementById(btnId);
       const input = document.getElementById(inputId);
@@ -546,13 +626,30 @@
       btn.addEventListener("click", () => input.click());
       input.addEventListener("change", () => { status.textContent = describe(input.files); });
     }
-    wireFileButton("btnChooseReportFile", "reportFileInput", "reportFileStatus",
-      (files) => (files[0] ? `已選擇：${files[0].name}` : ""));
     wireFileButton("btnChooseReportPhotos", "reportPhotosInput", "reportPhotosStatus",
       (files) => {
         const jpgs = Array.from(files).filter((f) => /\.jpe?g$/i.test(f.name));
         return jpgs.length ? `已選擇資料夾，找到 ${jpgs.length} 張 jpg 照片` : "資料夾裡沒有找到 jpg 照片";
       });
+
+    // 「選擇月報範本」這顆按鈕依瀏覽器支援度分兩種行為：
+    //   支援 File System Access API → 選資料夾，自動抓範本、之後產生報告直接寫回同一個資料夾；
+    //   不支援（Firefox／file:// 開啟）→ 退回選單一 docx 檔案、產生報告觸發瀏覽器下載這個舊做法
+    const chooseReportBtn = document.getElementById("btnChooseReportFile");
+    const genBtn = document.getElementById("btnReportGenerate");
+    if (supportsFsAccess) {
+      chooseReportBtn.textContent = "選擇報告資料夾";
+      genBtn.textContent = "📄 產生報告（存到範本資料夾）";
+      chooseReportBtn.addEventListener("click", pickReportFolder);
+    } else {
+      chooseReportBtn.textContent = "選擇月報範本 docx";
+      const fallbackInput = document.getElementById("reportFileInputFallback");
+      const fileStatus = document.getElementById("reportFileStatus");
+      chooseReportBtn.addEventListener("click", () => fallbackInput.click());
+      fallbackInput.addEventListener("change", () => {
+        fileStatus.textContent = fallbackInput.files[0] ? `已選擇：${fallbackInput.files[0].name}` : "";
+      });
+    }
 
     // 沒有查訪路線檔名可以猜行政區了，改用照片資料夾的路徑（webkitdirectory 選資料夾時，每個檔案的
     // webkitRelativePath 會包含選到的資料夾名稱，例如「11508 士林/抽查照片/xxx.jpg」）
