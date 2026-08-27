@@ -14,7 +14,6 @@
   const LS_SETTINGS = "dispatch_settings_v1"; // 地理編碼設定 (Google API 金鑰、服務選擇)，主視窗與地圖視窗共用
   const LS_PAGE_SIZE = "dispatch_page_size_v1"; // 案件清單每頁筆數
   const LS_EXCLUDE_ON_IMPORT = "dispatch_exclude_old_garbage_on_import_v1"; // 匯入時是否自動排除3天前的垃圾/散落物案件（checkbox 記憶）
-  const LS_LAST_REMOVED = "dispatch_last_removed_v1"; // 最近一次「移除3天前垃圾/散落物」動作被拿掉的案件，供「復原」用
   const LS_LASTMONTH_FULL = "dispatch_lastmonth_full_v1"; // 「上月抽查管理」匯入的上月完整案件清單（原始資料，跟 state.cases 同 shape）
   const LS_LASTMONTH_AUDIT = "dispatch_lastmonth_audit_v1"; // 「上月抽查管理」匯入的機關抽查清單（原始資料，只有抽查專屬欄位）
   const LS_LASTMONTH_CASES = "dispatch_lastmonth_view_v1"; // getLastMonthCases() 算出來的合併結果，單向廣播給地圖視窗用，app.js 自己不靠這個 key 讀資料
@@ -35,7 +34,8 @@
 
   // 查驗共識：這兩項案件項目只查 3 天內成案的，3 天前的直接不列入考量（不是否決標記、是真的從
   // 資料裡移除）。使用者一開始要用 🚫 否決標記處理，但案件量大時「清單裡還留著、只是變淡」一樣要
-  // 捲過去找，改成真的刪除；為了不要一刀切太危險，額外留了「復原」的餘地（見 LS_LAST_REMOVED）。
+  // 捲過去找，改成真的刪除。原本還有一個「復原」按鈕可以把剛移除的一批找回來，使用者確認這兩項
+  // 一旦超過 3 天就真的沒有查驗意義了，不會想復原，這個功能已經拿掉。
   const AUTO_EXCLUDE_CATEGORIES = ["鄰里無主垃圾清運", "道路散落物或油漬處理"];
   const AUTO_EXCLUDE_DAYS = 3;
 
@@ -69,7 +69,6 @@
 
   let mapWindowRef = null;
   let lastRoute = null; // { startStation, order } - 最近一次算好的路線，供匯出 CSV 用
-  let lastRemovedBatch = null; // { cases: [...], ts } - 最近一次「移除3天前垃圾/散落物」拿掉的案件，供「復原」按鈕用；只留最近一批，不是完整歷史
   // 使用者自己在地圖視窗截圖存檔後選入的圖片，匯出 Word 時貼在文件最上方；純瀏覽器端沒辦法
   // 自動擷取地圖畫面（底圖圖磚來自 OSM/Google，兩邊都不允許用 canvas 讀取像素做截圖），
   // 所以改成讓使用者自己截圖、手動選檔這條路
@@ -397,7 +396,6 @@
     try { state.rejected = new Set(JSON.parse(localStorage.getItem(LS_REJECTED) || "[]")); } catch (e) { state.rejected = new Set(); }
     const savedPageSize = parseInt(localStorage.getItem(LS_PAGE_SIZE), 10);
     state.pageSize = [10, 20, 50].includes(savedPageSize) ? savedPageSize : DEFAULT_PAGE_SIZE;
-    try { lastRemovedBatch = JSON.parse(localStorage.getItem(LS_LAST_REMOVED) || "null"); } catch (e) { lastRemovedBatch = null; }
     try { state.lastMonthFullList = JSON.parse(localStorage.getItem(LS_LASTMONTH_FULL) || "[]"); } catch (e) { state.lastMonthFullList = []; }
     try { state.lastMonthAuditList = JSON.parse(localStorage.getItem(LS_LASTMONTH_AUDIT) || "[]"); } catch (e) { state.lastMonthAuditList = []; }
     state.routeLockEndId = localStorage.getItem(LS_ROUTE_LOCK_END) || null;
@@ -424,10 +422,6 @@
   }
   function persistRejected() {
     localStorage.setItem(LS_REJECTED, JSON.stringify(Array.from(state.rejected)));
-  }
-  function persistLastRemovedBatch() {
-    if (lastRemovedBatch) localStorage.setItem(LS_LAST_REMOVED, JSON.stringify(lastRemovedBatch));
-    else localStorage.removeItem(LS_LAST_REMOVED);
   }
   function persistRouteLockEnd() {
     if (state.routeLockEndId) localStorage.setItem(LS_ROUTE_LOCK_END, state.routeLockEndId);
@@ -604,11 +598,8 @@
     }
     state.cases = merged;
     persistCases();
-    // 排除掉的案件記成「可復原」的一批，跟案件清單那顆「移除」按鈕共用同一套復原機制——
-    // 這裡是匯入當下就直接不放進資料，使用者要「後悔」的話一樣可以按復原找回來
-    if (excluded.length) rememberRemovedBatch(excluded);
     render();
-    alert("匯入完成，目前共 " + state.cases.length + " 筆案件。" + (excluded.length ? `（已排除 ${excluded.length} 筆 ${AUTO_EXCLUDE_DAYS} 天前的垃圾/散落物案件，可用「復原」按鈕找回）` : ""));
+    alert("匯入完成，目前共 " + state.cases.length + " 筆案件。" + (excluded.length ? `（已排除 ${excluded.length} 筆 ${AUTO_EXCLUDE_DAYS} 天前的垃圾/散落物案件）` : ""));
   }
 
   // 「上月抽查管理」的兩個匯入：跟主匯入不同，這裡是單一份「上月 snapshot」，
@@ -1342,48 +1333,10 @@
     return cutoff;
   }
 
-  // 記住剛被移除的這一批案件（連同當時的 ♡/🚫 標記狀態），存進 localStorage，
-  // 讓「復原」按鈕在重新整理頁面後也還找得到——使用者要求刪除要留「後悔的餘地」，
-  // 只保留最近一批，不是完整的復原歷史
-  function rememberRemovedBatch(cases) {
-    lastRemovedBatch = {
-      cases: cases.map((c) => ({ case: c, wasMarked: state.marked.has(c.id), wasRejected: state.rejected.has(c.id) })),
-      ts: Date.now(),
-    };
-    persistLastRemovedBatch();
-  }
-
-  function undoLastRemoval() {
-    if (!lastRemovedBatch || !lastRemovedBatch.cases.length) return;
-    const existingIds = new Set(state.cases.map((c) => c.id));
-    let restored = 0;
-    lastRemovedBatch.cases.forEach(({ case: c, wasMarked, wasRejected }) => {
-      if (existingIds.has(c.id)) return; // 已經用其他方式重新匯入過同一筆了，不要疊加出重複案件
-      state.cases.push(c);
-      if (wasMarked) state.marked.add(c.id);
-      if (wasRejected) state.rejected.add(c.id);
-      restored++;
-    });
-    lastRemovedBatch = null;
-    persistCases(); persistMarked(); persistRejected(); persistLastRemovedBatch();
-    renderAll();
-    alert(restored ? `已復原 ${restored} 筆案件。` : "這些案件已經用其他方式重新匯入過了，沒有需要復原的。");
-  }
-
-  function renderUndoHint() {
-    const btn = document.getElementById("btnUndoRemoved");
-    if (!btn) return;
-    if (lastRemovedBatch && lastRemovedBatch.cases.length) {
-      btn.style.display = "";
-      btn.textContent = `↩️ 復原剛移除的 ${lastRemovedBatch.cases.length} 筆`;
-    } else {
-      btn.style.display = "none";
-    }
-  }
-
   // 查驗共識：「鄰里無主垃圾清運」「道路散落物或油漬處理」只查 3 天內成案的，3 天前的直接不列入
   // 考量。使用者確認要「真的從資料裡移除」（不是否決標記）——案件量大時否決標記還留在清單裡、只是
-  // 變淡，一樣要捲過去，希望清單本身變短；但刪除要留後悔的餘地，所以會記住這一批供「復原」按鈕使用。
+  // 變淡，一樣要捲過去，希望清單本身變短。原本有一個「復原」按鈕可以把剛移除的一批找回來，使用者
+  // 確認這兩項一旦超過 3 天就真的沒有查驗意義了、不會想復原，已經拿掉這個功能，移除就是真的移除。
   // 匯入那一刻就想先排除掉的話，見「資料匯入」頁籤的排除勾選框（見 handleFiles）
   function autoRemoveOldGarbageCases() {
     const cutoff = autoExcludeCutoff();
@@ -1392,10 +1345,9 @@
       alert(`沒有符合條件的案件（「${AUTO_EXCLUDE_CATEGORIES.join("」「")}」且成案時間為 ${AUTO_EXCLUDE_DAYS} 天前的案件）。`);
       return;
     }
-    if (!confirm(`將從資料中移除 ${targets.length} 筆「${AUTO_EXCLUDE_CATEGORIES.join("」「")}」（${AUTO_EXCLUDE_DAYS} 天前成案）案件。移除後可以用「復原」按鈕還原，確定嗎？`)) return;
+    if (!confirm(`將從資料中移除 ${targets.length} 筆「${AUTO_EXCLUDE_CATEGORIES.join("」「")}」（${AUTO_EXCLUDE_DAYS} 天前成案）案件，確定嗎？`)) return;
     const targetIds = new Set(targets.map((c) => c.id));
     state.cases = state.cases.filter((c) => !targetIds.has(c.id));
-    rememberRemovedBatch(targets);
     targetIds.forEach((id) => { state.marked.delete(id); state.rejected.delete(id); });
     persistCases(); persistMarked(); persistRejected();
     renderAll(); // 一次改動很多筆，直接整份重畫比逐筆補 DOM 簡單可靠
@@ -1591,7 +1543,6 @@
     renderStationGroups();
     updateRouteHint();
     renderMarkedList();
-    renderUndoHint();
   }
   const render = renderAll;
 
@@ -1860,7 +1811,6 @@
       renderAll();
     });
     document.getElementById("btnAutoRemoveOld").addEventListener("click", autoRemoveOldGarbageCases);
-    document.getElementById("btnUndoRemoved").addEventListener("click", undoLastRemoval);
     document.getElementById("excludeOldOnImport").checked = localStorage.getItem(LS_EXCLUDE_ON_IMPORT) === "1";
     document.getElementById("excludeOldOnImport").addEventListener("change", (e) => {
       localStorage.setItem(LS_EXCLUDE_ON_IMPORT, e.target.checked ? "1" : "0");
