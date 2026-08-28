@@ -17,6 +17,7 @@
   const LS_LASTMONTH_FULL = "dispatch_lastmonth_full_v1"; // 「上月抽查管理」匯入的上月完整案件清單（原始資料，跟 state.cases 同 shape）
   const LS_LASTMONTH_AUDIT = "dispatch_lastmonth_audit_v1"; // 「上月抽查管理」匯入的機關抽查清單（原始資料，只有抽查專屬欄位）
   const LS_LASTMONTH_CASES = "dispatch_lastmonth_view_v1"; // getLastMonthCases() 算出來的合併結果，單向廣播給地圖視窗用，app.js 自己不靠這個 key 讀資料
+  const LS_CATEGORY_FILTER = "dispatch_category_filter_v1"; // 「依案件項目」排除設定（state.filter.category），單向廣播給地圖視窗，讓地圖只畫出沒被排除的案件
 
   const DEFAULT_PAGE_SIZE = 10;
 
@@ -399,6 +400,9 @@
     try { state.lastMonthFullList = JSON.parse(localStorage.getItem(LS_LASTMONTH_FULL) || "[]"); } catch (e) { state.lastMonthFullList = []; }
     try { state.lastMonthAuditList = JSON.parse(localStorage.getItem(LS_LASTMONTH_AUDIT) || "[]"); } catch (e) { state.lastMonthAuditList = []; }
     state.routeLockEndId = localStorage.getItem(LS_ROUTE_LOCK_END) || null;
+    // 現在地圖視窗的圖例圓點也能改這個排除設定（見 toggleCategoryFilterFromMap()），重新整理主視窗時
+    // 也要照這個值還原，不然剛好在地圖那邊點過篩選後，回主視窗重新整理會看到兩邊的篩選狀態對不起來
+    try { state.filter.category = new Set(JSON.parse(localStorage.getItem(LS_CATEGORY_FILTER) || "[]")); } catch (e) { state.filter.category = new Set(); }
   }
 
   function persistCases() {
@@ -688,10 +692,18 @@
     const entries = countBy(list, key);
     const max = entries.length ? entries[0][1] : 1;
     const excluded = state.filter[filterField]; // Set 裡的值代表「不要顯示」，預設空集合 = 全部勾選/全部顯示
+    // 使用者要求地圖也只顯示案件項目篩選後的結果（例如點色點只看某一類），這裡順便把目前的排除
+    // 設定廣播給地圖視窗；每次重畫這個清單就重新廣播一次，不用額外去每個會改到 state.filter.category
+    // 的地方另外加一行，任何變動最終都會經過這裡（renderAll() 一定會呼叫 renderBreakdown）
+    if (filterField === "category") {
+      localStorage.setItem(LS_CATEGORY_FILTER, JSON.stringify(Array.from(excluded)));
+    }
     el.innerHTML = entries.map(([name, count]) => {
       const active = !excluded.has(name); // active = 有勾選 = 會顯示
       const pct = Math.round((count / max) * 100);
-      const swatch = filterField === "category" ? `<span class="swatch" style="background:${colorFor(name)}"></span>` : "";
+      const swatch = filterField === "category"
+        ? `<span class="swatch swatch-clickable" title="點一下只顯示這個類別，再點一次恢復全部顯示" style="background:${colorFor(name)}"></span>`
+        : "";
       return `
         <div class="bar-row ${active ? "active" : ""}" data-field="${filterField}" data-value="${escapeHtml(name)}">
           <div class="name"><input type="checkbox" class="bar-check" ${active ? "checked" : ""} tabindex="-1">${swatch}${escapeHtml(name)}</div>
@@ -711,6 +723,26 @@
         const value = row.dataset.value;
         const set = state.filter[field];
         if (set.has(value)) set.delete(value); else set.add(value); // 取消勾選 = 加入排除集合
+        state.page = 1;
+        renderAll();
+      });
+    });
+
+    // 使用者要求比照「皮克敏名冊」那種篩選手感：點色點只顯示這一個類別（其他全部排除），
+    // 再點一次（已經是「只剩這個」的狀態時）恢復全部顯示。直接用既有每列前面的色點當按鈕，
+    // 不用另外多佔一排版面；跟色點所在的整列既有的「單項排除」點擊行為分開，要 stopPropagation
+    // 不然點色點會同時觸發外層 .bar-row 的點擊，兩個行為互相打架
+    el.querySelectorAll(".swatch-clickable").forEach((sw) => {
+      sw.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const row = sw.closest(".bar-row");
+        const field = row.dataset.field;
+        const value = row.dataset.value;
+        const set = state.filter[field];
+        const allNames = entries.map(([n]) => n);
+        const isolated = allNames.length > 1 && !set.has(value) && allNames.every((n) => n === value || set.has(n));
+        set.clear();
+        if (!isolated) allNames.forEach((n) => { if (n !== value) set.add(n); });
         state.page = 1;
         renderAll();
       });
@@ -1891,6 +1923,11 @@
       try { state.rejected = new Set(JSON.parse(localStorage.getItem(LS_REJECTED) || "[]")); } catch (err) { state.rejected = new Set(); }
       renderAll();
       renderLastMonthPanel();
+    } else if (e.key === LS_CATEGORY_FILTER) {
+      // 使用者也可以直接點地圖下方圖例的圓點篩選（跟主視窗點色點同一套邏輯），主視窗這邊要跟著把
+      // 「依案件項目」清單的勾選狀態同步過來，不然會變成兩邊看到的排除設定不一致
+      try { state.filter.category = new Set(JSON.parse(localStorage.getItem(LS_CATEGORY_FILTER) || "[]")); } catch (err) { state.filter.category = new Set(); }
+      renderAll();
     }
   });
 

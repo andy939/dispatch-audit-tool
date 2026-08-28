@@ -315,6 +315,8 @@ input[type=text], input[type=search], select {
 .bar-row .name { font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .bar-row .name .bar-check { pointer-events: none; margin: 0; }
 .bar-row .name .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+.bar-row .name .swatch-clickable { cursor: pointer; }
+.bar-row .name .swatch-clickable:hover { box-shadow: 0 0 0 3px rgba(0,0,0,0.15); }
 .bar-row .track { grid-column: 1 / span 2; height: 6px; background: #eef1f4; border-radius: 3px; overflow: hidden; margin-top: 2px; }
 .bar-row .fill { height: 100%; background: var(--accent); }
 .bar-row .count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -496,6 +498,8 @@ td.addr-cell-wrap {
 }
 .legend .item { display: flex; align-items: center; gap: 5px; }
 .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.legend .dot-clickable { cursor: pointer; }
+.legend .dot-clickable:hover { box-shadow: 0 0 0 3px rgba(0,0,0,0.15); }
 
 .station-item {
   font-size: 12px;

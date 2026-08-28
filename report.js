@@ -41,12 +41,60 @@
     "雨水下水道側溝清淤": "側溝已清疏",
   };
 
-  function buildVerificationPhrase(category) {
+  // 有些案件項目底下其實包了好幾種完全不同的實際狀況（例如「路燈不亮或損壞」同時涵蓋不亮、
+  // 電線垂落、燈桿傾斜、零件脫落…），只看項目分類套一句固定說法會講錯（使用者實測抓到：北投一筆
+  // 「路燈不亮或損壞」案件實際是燈桿傾斜，套用「路燈已正常放亮」文不對題）。改成先比對案件原始
+  // 內容（c.content）裡有沒有更具體的關鍵字，命中才用對應的說法；比對不到才退回類別預設說法，
+  // 這種情況會回傳 confident:false，畫面上要標示「請核對」提醒使用者這句沒有比對案件內容、
+  // 只是用項目分類猜的，務必自己確認。跟 update_audit_report.py 的同名函式要維持一致。
+  const CONTENT_KEYWORD_PHRASES = {
+    "路燈不亮或損壞": [
+      [/傾斜|歪斜|歪掉/, "燈桿已扶正"],
+      [/電線|纜線|垂落/, "路燈電線已無垂落"],
+      [/外蓋|燈罩|零件.*脫落|鬆脫/, "燈桿外蓋已固定"],
+      [/基座|底座/, "路燈基座已修復"],
+      [/不亮|不放光|熄|故障|閃爍/, "路燈已正常放亮"],
+    ],
+    "交通標誌及設施物損壞(含汙損)、傾斜": [
+      [/反射鏡|反光鏡/, "反光鏡已調正"],
+      [/汙損|髒污|塗鴉/, "標誌牌汙損已清潔"],
+      [/傾斜|歪斜|歪掉/, "標誌已扶正"],
+      [/斷裂|損壞|毀損/, "已更換固定"],
+    ],
+    "交通號誌電纜線垂落及設施損壞": [
+      [/垂落|電纜線/, "號誌電纜線已妥善固定，無垂落情形"],
+      [/傾斜|歪斜/, "號誌燈桿已扶正"],
+      [/按鈕|按壓/, "行人按鈕已修復正常運作"],
+    ],
+    "道路側溝溝蓋(含周邊)損壞遺失": [
+      [/遺失|不見/, "側溝溝蓋已補齊固定"],
+      [/鬆動|聲響/, "側溝溝蓋已固定，無鬆動聲響"],
+      [/凹陷|破損/, "側溝溝蓋周邊已修復"],
+    ],
+    "人孔蓋(含周邊)破損、遺失處理": [
+      [/突起|不平|沒有放平|凸起|翹起/, "人孔蓋已回復平整"],
+      [/遺失|不見|沒有蓋/, "人孔蓋已補齊固定"],
+      [/鬆動|聲響|搖晃/, "人孔蓋已固定，無鬆動聲響"],
+      [/破損|裂/, "人孔蓋已修復完成"],
+    ],
+  };
+
+  function buildVerificationPhrase(category, content) {
     const normalized = (category || "").replace(/\s+/g, "");
+    let matchedKey = null;
     for (const key in CATEGORY_PHRASES) {
-      if (key.replace(/\s+/g, "") === normalized) return CATEGORY_PHRASES[key];
+      if (key.replace(/\s+/g, "") === normalized) { matchedKey = key; break; }
     }
-    return category ? `${category}已完成改善` : "現場已完成改善";
+    const rules = matchedKey ? CONTENT_KEYWORD_PHRASES[matchedKey] : null;
+    if (rules) {
+      for (const [pattern, phrase] of rules) {
+        if (pattern.test(content || "")) return { phrase, confident: true };
+      }
+    }
+    const fallback = matchedKey ? CATEGORY_PHRASES[matchedKey] : (category ? `${category}已完成改善` : "現場已完成改善");
+    // 這個項目根本沒有訂細分規則（rules 是 null）時，就是原本的行為，不用特別標記；
+    // 有訂規則、但案件內容比對不到任何一條，才是真的沒把握，要提醒使用者自己核對
+    return { phrase: fallback, confident: !rules };
   }
 
   function directChildren(el, localName) {
@@ -105,6 +153,7 @@
         district: a.district || (full && full.district) || "",
         agency: full ? full.agency : "",
         address: full ? full.address : "",
+        content: full ? full.content : "",
       };
     });
     return { thisMonth, lastMonth };
@@ -407,13 +456,15 @@
       const { text: addr, lowConfidence } = simplifyAddress(s.address);
       const stage = s.isLastMonth ? "複查" : "抽查";
       const closing = s.isLastMonth ? "，權責機關確已完成案件處理及抽查作業。" : "，權責機關確依限完成案件處理作業。";
-      const contentLine2 = `經實地查證，${buildVerificationPhrase(s.category)}` + closing;
+      const { phrase: verificationPhrase, confident: phraseConfident } = buildVerificationPhrase(s.category, s.content);
+      const contentLine2 = `經實地查證，${verificationPhrase}` + closing;
       const dateMd = rowDates[s.id];
 
       preview.push({
         row: i + 1, id: s.id, stage, category: s.category, agency: s.agency,
         date: dateMd, address: addr, addressLowConfidence: lowConfidence,
         addressRaw: s.address, photoName: photoByStem[s.id].name,
+        verificationPhrase, phraseLowConfidence: !phraseConfident,
       });
 
       if (dryRun) continue;
@@ -461,10 +512,11 @@
         <td>${escapeHtmlLocal(r.category)}</td>
         <td>${escapeHtmlLocal(r.agency)}</td>
         <td>${escapeHtmlLocal(r.address)}${r.addressLowConfidence ? ' <span style="color:#c9821a">⚠ 請確認</span>' : ""}</td>
+        <td>${escapeHtmlLocal(r.verificationPhrase)}${r.phraseLowConfidence ? ' <span style="color:#c9821a">⚠ 請核對</span>' : ""}</td>
         <td>${escapeHtmlLocal(r.photoName)}</td>
       </tr>`).join("");
     return `<table class="case-table">
-      <thead><tr><th>列</th><th>階段</th><th>案號</th><th>日期</th><th>項目</th><th>機關</th><th>簡化地址</th><th>照片</th></tr></thead>
+      <thead><tr><th>列</th><th>階段</th><th>案號</th><th>日期</th><th>項目</th><th>機關</th><th>簡化地址</th><th>查證說法</th><th>照片</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   }
@@ -473,9 +525,23 @@
     return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  // 選好資料夾後：申請寫入權限（存回同一個資料夾要用），掃資料夾裡的 docx 找範本——
-  // 排除掉「_已更新」開頭的檔案（那是上次產生的結果，不是範本）跟 Word 開啟中的暫存鎖定檔「~$」。
-  // 剛好只有 1 個候選就直接用；有多個就列出來讓使用者自己選（例如同一個資料夾放了不只一個月的範本）
+  // 輸出檔名固定格式「{原始檔名}_已更新_{行政區}_{YYYYMMDD}_{HHMM}.docx」，從這裡面把時間戳記
+  // 抓出來（抓不到就回傳 null，代表這不是一份「已更新」檔案，是原始範本）
+  function extractUpdatedTimestamp(name) {
+    const m = name.match(/_已更新_[^_]+_(\d{8})_(\d{4})\.docx$/i);
+    return m ? m[1] + m[2] : null;
+  }
+  // 拿掉「_已更新_{行政區}_{時間戳記}」尾巴，回推出乾淨的原始檔名——這樣不管接續哪一份「已更新」
+  // 檔案繼續產生，輸出檔名都還是用原始範本的名字加新時間戳記，不會一次一次疊字越疊越長
+  function deriveBaseName(name) {
+    return name.replace(/_已更新_[^_]+_\d{8}_\d{4}(\.docx)$/i, "$1");
+  }
+
+  // 選好資料夾後：申請寫入權限（存回同一個資料夾要用），掃資料夾裡的 docx 找範本，排除 Word 開啟中
+  // 的暫存鎖定檔「~$」。使用者反映：先做士林產生一份「已更新」檔案，接著做北投時，如果又抓回最原始
+  // 的範本，兩個行政區的更新不會疊在同一份檔案裡——改成「已更新」檔案不再排除，而是優先接續其中
+  // 時間戳記最新的那份繼續疊加；完全沒有「已更新」檔案時才用原始範本。剛好只有 1 個候選就直接用；
+  // 有多個（例如同時有原始範本＋好幾份不同時間點的已更新檔案）就列出來、預設選最新的，也能自己換
   async function pickReportFolder() {
     const statusEl = document.getElementById("reportFileStatus");
     const pickSel = document.getElementById("reportTemplatePick");
@@ -495,30 +561,39 @@
 
     const candidates = [];
     for await (const [name, handle] of dir.entries()) {
-      if (handle.kind === "file" && /\.docx$/i.test(name) && !name.includes("已更新") && !name.startsWith("~$")) {
-        candidates.push({ name, handle });
+      if (handle.kind === "file" && /\.docx$/i.test(name) && !name.startsWith("~$")) {
+        candidates.push({ name, handle, ts: extractUpdatedTimestamp(name) });
       }
     }
     if (!candidates.length) {
-      statusEl.textContent = `「${dir.name}」資料夾裡找不到月報範本 docx（已排除之前產生過的「_已更新」檔案）。`;
+      statusEl.textContent = `「${dir.name}」資料夾裡找不到任何 docx 檔案。`;
       reportTemplateHandle = null;
       pickSel.style.display = "none";
       return;
     }
+    // 「已更新」檔案（有時間戳記）優先，且時間戳記新的排前面；原始範本（沒有時間戳記）排最後
+    candidates.sort((a, b) => {
+      if (a.ts && b.ts) return b.ts.localeCompare(a.ts);
+      if (a.ts) return -1;
+      if (b.ts) return 1;
+      return 0;
+    });
+
     if (candidates.length === 1) {
       reportTemplateHandle = candidates[0].handle;
       pickSel.style.display = "none";
       statusEl.textContent = `已選擇資料夾「${dir.name}」，範本：${candidates[0].name}`;
     } else {
       pickSel.innerHTML = "";
-      candidates.forEach((c) => {
+      candidates.forEach((c, i) => {
         const opt = document.createElement("option");
-        opt.value = c.name; opt.textContent = c.name;
+        opt.value = c.name; opt.textContent = c.name + (i === 0 ? "（最新，預設）" : "");
         pickSel.appendChild(opt);
       });
+      pickSel.value = candidates[0].name;
       pickSel.style.display = "";
       reportTemplateHandle = candidates[0].handle;
-      statusEl.textContent = `「${dir.name}」資料夾裡有 ${candidates.length} 份 docx，請從右邊選擇範本：`;
+      statusEl.textContent = `「${dir.name}」資料夾裡有 ${candidates.length} 份 docx，已預設選最新的一份，也可以自己換：`;
       pickSel.onchange = () => {
         const found = candidates.find((c) => c.name === pickSel.value);
         reportTemplateHandle = found ? found.handle : null;
@@ -585,7 +660,9 @@
   async function saveResult(blob, originalName, district) {
     const now = new Date();
     const ts = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}_${pad2(now.getHours())}${pad2(now.getMinutes())}`;
-    const base = originalName.replace(/\.docx$/i, "");
+    // originalName 可能本身就是一份「已更新」檔案（接續上次的結果繼續疊加），先拿掉那段尾巴
+    // 回推乾淨的原始檔名，輸出檔名才不會一次一次疊字（...已更新_士林_ts1_已更新_北投_ts2...）
+    const base = deriveBaseName(originalName).replace(/\.docx$/i, "");
     const filename = `${base}_已更新_${district}_${ts}.docx`;
 
     if (supportsFsAccess && reportDirHandle) {

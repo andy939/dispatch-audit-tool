@@ -10,6 +10,9 @@
   const LS_REJECTED = "dispatch_rejected_v1"; // 主視窗標記「暫時否決」的案件，這裡同步過來把點位淡化顯示
   const LS_MARKED = "dispatch_marked_v1"; // 標記要排路線的案件；資訊卡的 ❤️ 也能直接改，跟主視窗雙向同步
   const LS_LASTMONTH_CASES = "dispatch_lastmonth_view_v1"; // 「上月抽查管理」合併後的清單，主視窗單向廣播過來，這裡只讀不寫
+  const LS_CATEGORY_FILTER = "dispatch_category_filter_v1"; // 主視窗「依案件項目」的排除設定，只套用在本月案件（cases），
+  // 不套用在上月抽查案件（lastMonthCases）——跟主視窗案件清單/依捷運站分群同一個原則：本月的顯示層篩選
+  // 不該影響上月抽查資料，上月抽查清單本身就已經是篩過一輪的固定名單
 
   // 使用者要求參考 Google 地圖的配色風格；Google 地圖本身的圖標配色沒有公開對外的固定色碼表，
   // 改採 Google 自家 Material Design 色盤（Google 產品一致採用的標準色系，同樣是這種飽和、乾淨
@@ -27,6 +30,7 @@
   let rejected = new Set();
   let marked = new Set();
   let lastMonthCases = [];
+  let categoryFilter = new Set(); // 排除的案件項目，只套用在本月的 cases，見 LS_CATEGORY_FILTER 註解
 
   let map, mrtLayer, caseLayer, routeLayer;
   const markersById = new Map();
@@ -160,6 +164,7 @@
     try { rejected = new Set(JSON.parse(localStorage.getItem(LS_REJECTED) || "[]")); } catch (e) { rejected = new Set(); }
     try { marked = new Set(JSON.parse(localStorage.getItem(LS_MARKED) || "[]")); } catch (e) { marked = new Set(); }
     try { lastMonthCases = JSON.parse(localStorage.getItem(LS_LASTMONTH_CASES) || "[]"); } catch (e) { lastMonthCases = []; }
+    try { categoryFilter = new Set(JSON.parse(localStorage.getItem(LS_CATEGORY_FILTER) || "[]")); } catch (e) { categoryFilter = new Set(); }
   }
 
   // 資訊卡的 ❤️／🚫 直接在地圖上改，不用切回主視窗——跟主視窗的 toggleMarked()/toggleRejected() 是
@@ -207,6 +212,15 @@
   // 判斷要不要用上月專屬的邊框樣式，這樣只要改這一個函式，其他呼叫 allCases() 的地方都自動涵蓋到
   function allCases() {
     return cases.concat(lastMonthCases);
+  }
+
+  // 使用者要求地圖也只顯示「本月案件管理」依項目篩選後的結果（例如點色點只看某一類）。故意只
+  // 套在本月案件上，上月抽查案件（id 有「抽」前綴）一律不受影響、照常顯示——跟主視窗案件清單/
+  // 依捷運站分群同一個原則，上月抽查清單本身已經是篩過一輪的固定名單，不該被本月的顯示層篩選誤傷。
+  // 只有畫地圖點位（plotFromCache）用這個，路線規劃／未定位清單等其他地方都還是用 allCases()，
+  // 這個篩選純粹是「這次要不要在地圖上看到它」，不影響案件本身有沒有被規劃進路線
+  function visibleCasesForMap() {
+    return allCases().filter((c) => c.id.indexOf("抽") === 0 || !categoryFilter.has(c.category));
   }
 
   // ---------- 地圖底圖 (OpenStreetMap 或 Google，依主頁設定) ----------
@@ -370,7 +384,23 @@
     const el = document.getElementById("mapLegend");
     if (!cats.length) { el.innerHTML = `<div class="item"><span class="dot" style="background:#888"></span>灰點 = 捷運站</div>`; return; }
     el.innerHTML = `<div class="item"><span class="dot" style="background:#888"></span>捷運站</div>` +
-      cats.map((c) => `<div class="item"><span class="dot" style="background:${colorFor(c)}"></span>${escapeHtml(c)}</div>`).join("");
+      cats.map((c) => `<div class="item"><span class="dot dot-clickable" data-category="${escapeHtml(c)}" title="點一下只顯示這個類別，再點一次恢復全部顯示" style="background:${colorFor(c)}"></span>${escapeHtml(c)}</div>`).join("");
+    el.querySelectorAll(".dot-clickable").forEach((dot) => {
+      dot.addEventListener("click", () => toggleCategoryFilterFromMap(dot.dataset.category));
+    });
+  }
+
+  // 圖例圓點也能點，跟主視窗「點色點只顯示這個類別」同一套手感，而且雙向同步（跟 ❤️/🚫 一樣，
+  // 這裡改了主視窗那邊也會跟著更新）。排除設定只套用在本月案件（cases），所以「isolate」是不是
+  // 已經達成，只看本月案件目前有的類別集合，不看上月抽查的類別（上月案件本來就不受這個篩選影響）
+  function toggleCategoryFilterFromMap(category) {
+    const thisMonthCats = Array.from(new Set(cases.map((c) => c.category)));
+    const isolated = thisMonthCats.length > 1 && !categoryFilter.has(category)
+      && thisMonthCats.every((c) => c === category || categoryFilter.has(c));
+    categoryFilter.clear();
+    if (!isolated) thisMonthCats.forEach((c) => { if (c !== category) categoryFilter.add(c); });
+    localStorage.setItem(LS_CATEGORY_FILTER, JSON.stringify(Array.from(categoryFilter)));
+    plotFromCache(false);
   }
 
   function renderSummary() {
@@ -466,7 +496,10 @@
     const rejectedMarkers = [];
     let cachedCount = 0;
 
-    allCases().forEach((c) => {
+    visibleCasesForMap().forEach((c) => {
+      // 「上月抽查管理」的案件 id 全部帶「抽」前綴（app.js getLastMonthCases()），用這個判斷要不要
+      // 套用上月專屬的邊框樣式（深藍粗虛線），跟本月案件的白色實框、否決的灰色細框都明顯不同
+      const isLastMonth = c.id.indexOf("抽") === 0;
       const loc = geocache[cacheKeyFor(c)];
       if (!loc) return;
       cachedCount++;
@@ -475,10 +508,6 @@
       // 邊框改灰色），跟主視窗清單「背景白、文字淺灰」是同一個「淡化」語意，方便使用者直接看圖判斷，
       // 不用切回主視窗核對哪些已經否決
       const isRejected = rejected.has(c.id);
-      // 「上月抽查管理」的案件 id 全部帶「抽」前綴（app.js getLastMonthCases()），用這個判斷要不要
-      // 套用上月專屬的邊框樣式（深藍粗虛線），跟本月案件的白色實框、否決的灰色細框都明顯不同；
-      // 否決狀態視覺優先權比較高（本來就代表要淡化不管它是哪個月的），蓋掉上月的邊框樣式
-      const isLastMonth = c.id.indexOf("抽") === 0;
       const approxNote = loc.intersection
         ? "<br><i style=\"color:#c9821a\">⚠ 路口交叉點估算位置，僅供大致參考</i>"
         : loc.approx ? "<br><i style=\"color:#c9821a\">⚠ 僅約略定位到路段，非精確門牌</i>" : "";
@@ -521,7 +550,7 @@
     if (fitView && bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
     renderMapLegend();
 
-    const total = allCases().length;
+    const total = visibleCasesForMap().length;
     const missing = total - cachedCount;
     const progress = document.getElementById("geocodeProgress");
     const exportBtn = document.getElementById("btnExportUnlocated");
@@ -704,9 +733,9 @@
       plotFromCache();
       drawRoute();
       geocodeAllCases({ silent: true });
-    } else if (e.key === LS_REJECTED || e.key === LS_MARKED) {
+    } else if (e.key === LS_REJECTED || e.key === LS_MARKED || e.key === LS_CATEGORY_FILTER) {
       loadFromStorage();
-      plotFromCache(false); // 只是否決/標記狀態的樣式變化，座標沒變，不要連動 zoom/平移
+      plotFromCache(false); // 只是否決/標記/篩選狀態的樣式變化，座標沒變，不要連動 zoom/平移
     } else if (e.key === LS_FOCUS) {
       handleFocusRequest();
     } else if (e.key === LS_ROUTE) {

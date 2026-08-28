@@ -50,12 +50,60 @@ CATEGORY_PHRASES = {
 }
 
 
-def build_verification_phrase(category):
+# 有些案件項目底下其實包了好幾種完全不同的實際狀況（例如「路燈不亮或損壞」同時涵蓋不亮、電線垂落、
+# 燈桿傾斜、零件脫落…），只看項目分類套一句固定說法會講錯（使用者實測抓到：一筆「路燈不亮或損壞」
+# 案件實際是燈桿傾斜，套用「路燈已正常放亮」文不對題）。改成先比對案件原始內容裡有沒有更具體的
+# 關鍵字，命中才用對應的說法；比對不到才退回類別預設說法，這種情況回傳 confident=False，
+# 呼叫端要標示提醒使用者這句沒有比對案件內容、只是用項目分類猜的。跟 report.js 的同名函式要維持一致。
+CONTENT_KEYWORD_PHRASES = {
+    "路燈不亮或損壞": [
+        (r"傾斜|歪斜|歪掉", "燈桿已扶正"),
+        (r"電線|纜線|垂落", "路燈電線已無垂落"),
+        (r"外蓋|燈罩|零件.*脫落|鬆脫", "燈桿外蓋已固定"),
+        (r"基座|底座", "路燈基座已修復"),
+        (r"不亮|不放光|熄|故障|閃爍", "路燈已正常放亮"),
+    ],
+    "交通標誌及設施物損壞(含汙損)、傾斜": [
+        (r"反射鏡|反光鏡", "反光鏡已調正"),
+        (r"汙損|髒污|塗鴉", "標誌牌汙損已清潔"),
+        (r"傾斜|歪斜|歪掉", "標誌已扶正"),
+        (r"斷裂|損壞|毀損", "已更換固定"),
+    ],
+    "交通號誌電纜線垂落及設施損壞": [
+        (r"垂落|電纜線", "號誌電纜線已妥善固定，無垂落情形"),
+        (r"傾斜|歪斜", "號誌燈桿已扶正"),
+        (r"按鈕|按壓", "行人按鈕已修復正常運作"),
+    ],
+    "道路側溝溝蓋(含周邊)損壞遺失": [
+        (r"遺失|不見", "側溝溝蓋已補齊固定"),
+        (r"鬆動|聲響", "側溝溝蓋已固定，無鬆動聲響"),
+        (r"凹陷|破損", "側溝溝蓋周邊已修復"),
+    ],
+    "人孔蓋(含周邊)破損、遺失處理": [
+        (r"突起|不平|沒有放平|凸起|翹起", "人孔蓋已回復平整"),
+        (r"遺失|不見|沒有蓋", "人孔蓋已補齊固定"),
+        (r"鬆動|聲響|搖晃", "人孔蓋已固定，無鬆動聲響"),
+        (r"破損|裂", "人孔蓋已修復完成"),
+    ],
+}
+
+
+def build_verification_phrase(category, content=""):
     normalized = re.sub(r"\s+", "", category or "")
-    for key, phrase in CATEGORY_PHRASES.items():
+    matched_key = None
+    for key in CATEGORY_PHRASES:
         if re.sub(r"\s+", "", key) == normalized:
-            return phrase
-    return f"{category}已完成改善" if category else "現場已完成改善"
+            matched_key = key
+            break
+    rules = CONTENT_KEYWORD_PHRASES.get(matched_key) if matched_key else None
+    if rules:
+        for pattern, phrase in rules:
+            if re.search(pattern, content or ""):
+                return phrase, True
+    fallback = CATEGORY_PHRASES[matched_key] if matched_key else (f"{category}已完成改善" if category else "現場已完成改善")
+    # 這個項目根本沒訂細分規則（rules 是 None）就是原本的行為，不特別標記；
+    # 有訂規則、但案件內容比對不到任何一條，才是真的沒把握，要提醒使用者自己核對
+    return fallback, not rules
 
 
 CASE_ID_RE = re.compile(r"^\d{13}$")
@@ -304,7 +352,8 @@ def build_report(report_path, route_path, photos_dir, district, out_path,
         addr, low_conf = simplify_address(s["address_raw"])
         stage = "複查" if s["is_last_month"] else "抽查"
         closing = "，權責機關確已完成案件處理及抽查作業。" if s["is_last_month"] else "，權責機關確依限完成案件處理作業。"
-        content_line2 = f"經實地查證，{build_verification_phrase(s['category'])}" + closing
+        phrase, phrase_confident = build_verification_phrase(s["category"], s.get("content", ""))
+        content_line2 = f"經實地查證，{phrase}" + closing
         date_md = row_dates[s["id"]]
 
         preview.append({
@@ -312,6 +361,7 @@ def build_report(report_path, route_path, photos_dir, district, out_path,
             "agency": s["agency"], "date": date_md, "address": addr,
             "address_low_confidence": low_conf, "address_raw": s["address_raw"],
             "photo": photo_by_id[s["id"]],
+            "verification_phrase": phrase, "phrase_low_confidence": not phrase_confident,
         })
 
         if dry_run:
@@ -355,9 +405,12 @@ def main():
     if args.out:
         out_path = args.out
     else:
-        base, ext = os.path.splitext(args.report)
+        # --report 本身可能就是一份「已更新」檔案（接續上次的結果繼續疊加其他行政區），
+        # 先拿掉那段尾巴回推乾淨的原始檔名，輸出檔名才不會一次一次疊字
+        stem = re.sub(r"_已更新_[^_]+_\d{8}_\d{4}$", "", os.path.splitext(args.report)[0])
+        ext = os.path.splitext(args.report)[1]
         ts = datetime.now().strftime("%Y%m%d_%H%M")
-        out_path = f"{base}_已更新_{args.district}_{ts}{ext}"
+        out_path = f"{stem}_已更新_{args.district}_{ts}{ext}"
 
     preview = build_report(
         args.report, args.route, args.photos, args.district, out_path,
@@ -368,9 +421,11 @@ def main():
 
     print("=== 預覽：即將寫入的內容 ===")
     for row in preview:
-        flag = "  ⚠ 地址可能沒簡化乾淨，請人工確認" if row["address_low_confidence"] else ""
+        addr_flag = "  ⚠ 地址可能沒簡化乾淨，請人工確認" if row["address_low_confidence"] else ""
+        phrase_flag = "  ⚠ 沒有比對到案件內容關鍵字，這句是用項目分類猜的，請核對" if row["phrase_low_confidence"] else ""
         print(f"第{row['row']}列｜{row['stage']}｜案號 {row['id']}｜{row['date']}｜{row['category']}｜{row['agency']}")
-        print(f"  案址：{row['address']}{flag}（原始：{row['address_raw']}）")
+        print(f"  案址：{row['address']}{addr_flag}（原始：{row['address_raw']}）")
+        print(f"  查證說法：{row['verification_phrase']}{phrase_flag}")
         print(f"  照片：{row['photo']}")
     if not args.dry_run:
         print(f"\n已輸出：{out_path}")
