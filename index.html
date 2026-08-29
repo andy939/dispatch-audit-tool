@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>派工案件抽查規劃工具</title>
-<link rel="stylesheet" href="style.css?v=86">
+<link rel="stylesheet" href="style.css?v=93">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
-<script src="data.js?v=86"></script>
+<script src="data.js?v=93"></script>
 </head>
 <body>
 
@@ -23,7 +23,7 @@
 
 <div class="app-shell">
   <nav class="side-nav" id="sideNav">
-    <button class="side-nav-item" data-tab="import">📥 資料匯入</button>
+    <button class="side-nav-item" data-tab="import">📁 專案管理</button>
     <button class="side-nav-item" data-tab="list">🔍 本月案件管理</button>
     <button class="side-nav-item" data-tab="lastmonth">📋 上月抽查管理</button>
     <button class="side-nav-item" data-tab="station">🚇 依捷運站分群</button>
@@ -36,7 +36,29 @@
 
     <section class="tab-panel" data-tab-panel="import">
       <section class="panel">
-        <h2>📥 資料匯入</h2>
+        <h2>📁 專案管理</h2>
+        <div class="hint">分區抽查時，可以把目前的本月資料、上月資料、♡🚫標記、路線規劃結果存成一份專案（依行政區命名）。之後不管中間切去做了幾個別的行政區，讀取專案都能把本月／上月資料一次接續回來，不用重新匯入、重新標記。開新專案會清空目前的本月／上月資料，接著請到下面兩區手動匯入。手動儲存，不會自動存檔。</div>
+        <div class="toolbar" style="margin-top:10px">
+          <button class="ghost" id="btnPickProjectFolder">📁 選擇專案存檔資料夾（換電腦用）</button>
+        </div>
+        <div class="hint" id="projectFolderStatus" style="margin-top:6px">尚未選擇存檔資料夾，專案目前只存在這台電腦的瀏覽器裡。選了資料夾之後，儲存/讀取專案會自動讀寫資料夾裡的一個檔案，把整個資料夾複製到別台電腦、選同一個資料夾，就能接續。</div>
+        <div class="toolbar" style="margin-top:10px">
+          <button class="ghost" id="btnNewProject">🆕 開新專案</button>
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <select id="projectLoadSelect"><option value="">選擇專案</option></select>
+          <button class="secondary" id="btnLoadProject">📂 讀取專案</button>
+          <button class="ghost" id="btnDeleteProject">🗑️ 刪除專案</button>
+        </div>
+        <div class="toolbar" style="margin-top:8px">
+          <input type="text" id="projectNameInput" placeholder="行政區名稱，例如：士林" style="width:200px">
+          <button class="secondary" id="btnSaveProject">💾 儲存專案</button>
+        </div>
+        <div class="hint" id="projectStatus" style="margin-top:6px"></div>
+      </section>
+
+      <section class="panel">
+        <h2>🗓️ 本月資料</h2>
         <div class="toolbar">
           <input type="file" id="fileInput" accept=".xlsx,.xls" multiple style="display:none">
           <button class="secondary" id="btnUpload">匯入本月 xlsx 案件檔</button>
@@ -55,7 +77,7 @@
       </section>
 
       <section class="panel">
-        <h2>📋 上月抽查資料</h2>
+        <h2>📋 上月資料</h2>
         <div class="hint">先匯入上月完整案件清單，再匯入機關抽查清單；會以抽查清單為準，比對出地址/案件內容等明細，其餘沒被抽查的案件不列入。匯入結果在「上月抽查管理」頁籤查看。</div>
         <div class="toolbar" style="margin-top:10px">
           <input type="file" id="lastMonthFullInput" accept=".xlsx,.xls" multiple style="display:none">
@@ -113,7 +135,8 @@
               <button class="ghost" id="btnClearFilter">清除篩選</button>
               <button class="ghost" id="btnAutoRemoveOld" title="將「鄰里無主垃圾清運」「道路散落物或油漬處理」中，成案時間為 3 天前的案件從資料中移除">🗑️ 移除3天前垃圾/散落物案件</button>
               <span class="spacer"></span>
-              <button id="btnExportCsv">匯出目前清單 CSV</button>
+              <button id="btnExportXlsx" title="要匯入 Google 我的地圖，請用這個 xlsx 版本，CSV 版本目前已知匯入會失敗">匯出目前清單 xlsx（Google 我的地圖用）</button>
+              <button class="ghost" id="btnExportCsv" title="Google 我的地圖請改用左邊的 xlsx 按鈕，CSV 匯入已知會失敗">匯出目前清單 CSV</button>
             </div>
             <div class="table-wrap" style="margin-top:12px">
               <table class="case-table" id="caseTable">
@@ -257,7 +280,8 @@
             <option value="">不指定起點（案件間最短路線）</option>
           </select>
           <button id="btnPlanRoute">規劃路線</button>
-          <button class="ghost" id="btnExportRoute">匯出路線 CSV</button>
+          <button class="ghost" id="btnExportRouteXlsx" title="要匯入 Google 我的地圖，請用這個 xlsx 版本，CSV 版本目前已知匯入會失敗">匯出路線 xlsx（Google 我的地圖用）</button>
+          <button class="ghost" id="btnExportRoute" title="Google 我的地圖請改用左邊的 xlsx 按鈕，CSV 匯入已知會失敗">匯出路線 CSV</button>
           <button class="ghost" id="btnClearMarked">清空標記</button>
           <span class="spacer"></span>
           <span class="hint" style="margin:0">Ctrl+V 將截圖貼於此</span>
@@ -307,7 +331,7 @@
 <footer>資料僅存於本機瀏覽器 (localStorage)，未上傳任何伺服器。地圖已移至獨立視窗（右上角「開啟地圖視窗」），會自動同步這裡匯入的全部案件。每月請重新匯入最新 xlsx 案件檔。</footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="app.js?v=86"></script>
-<script src="report.js?v=86"></script>
+<script src="app.js?v=93"></script>
+<script src="report.js?v=93"></script>
 </body>
 </html>

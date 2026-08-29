@@ -18,6 +18,7 @@
   const LS_LASTMONTH_AUDIT = "dispatch_lastmonth_audit_v1"; // 「上月抽查管理」匯入的機關抽查清單（原始資料，只有抽查專屬欄位）
   const LS_LASTMONTH_CASES = "dispatch_lastmonth_view_v1"; // getLastMonthCases() 算出來的合併結果，單向廣播給地圖視窗用，app.js 自己不靠這個 key 讀資料
   const LS_CATEGORY_FILTER = "dispatch_category_filter_v1"; // 「依案件項目」排除設定（state.filter.category），單向廣播給地圖視窗，讓地圖只畫出沒被排除的案件
+  const LS_PROJECTS = "dispatch_projects_v1"; // 依行政區手動儲存的專案（案件資料＋♡🚫標記＋路線規劃結果），見「資料匯入」頁籤
 
   const DEFAULT_PAGE_SIZE = 10;
 
@@ -70,6 +71,12 @@
 
   let mapWindowRef = null;
   let lastRoute = null; // { startStation, order } - 最近一次算好的路線，供匯出 CSV 用
+  // 專案存檔資料夾（換電腦用）：跟 report.js 的「選擇報告資料夾」同一套 File System Access API，
+  // 只有安全來源（https/localhost）的 Chrome/Edge 才支援，file:// 雙擊打開不算安全來源，不支援時
+  // 專案還是照舊只存在這台電腦瀏覽器的 localStorage，不影響任何既有功能。這個 handle 不會跨重新整理
+  // 保留（沒有另外存進 IndexedDB），每次重新整理頁面都要重選一次資料夾，跟報告功能的限制一樣。
+  const supportsFsAccess = typeof window.showDirectoryPicker === "function" && window.isSecureContext;
+  let projectDirHandle = null;
   // 使用者自己在地圖視窗截圖存檔後選入的圖片，匯出 Word 時貼在文件最上方；純瀏覽器端沒辦法
   // 自動擷取地圖畫面（底圖圖磚來自 OSM/Google，兩邊都不允許用 canvas 讀取像素做截圖），
   // 所以改成讓使用者自己截圖、手動選檔這條路
@@ -604,6 +611,173 @@
     persistCases();
     render();
     alert("匯入完成，目前共 " + state.cases.length + " 筆案件。" + (excluded.length ? `（已排除 ${excluded.length} 筆 ${AUTO_EXCLUDE_DAYS} 天前的垃圾/散落物案件）` : ""));
+  }
+
+  // ---------- 專案（依行政區手動儲存/載入工作進度） ----------
+  // 使用者實際遇到的情境：分區抽查，士林做一半、換北投、幾天後回頭接續士林，但案件資料/♡標記
+  // 沒有留存，得重新匯入 xlsx、重新手動標記一次。改成可以手動存成一份「專案」（用行政區名稱當
+  // key），內容包含本月案件資料、上月抽查資料（lastMonthFullList/lastMonthAuditList）、♡🚫標記、
+  // 路線規劃結果（不含案件項目篩選狀態——使用者確認篩選是每次看資料當下的暫時狀態，不用跟著
+  // 專案存起來）。手動存/載，不會自動存檔，切換專案前沒存的工作會被覆蓋掉，所以讀取/開新專案
+  // 前一定要 confirm 提醒。
+  function loadProjects() {
+    try { return JSON.parse(localStorage.getItem(LS_PROJECTS) || "{}"); } catch (e) { return {}; }
+  }
+  function persistProjects(projects) {
+    localStorage.setItem(LS_PROJECTS, JSON.stringify(projects));
+    syncProjectsFileToFolder(projects);
+  }
+
+  // 有選過存檔資料夾時，每次 persistProjects() 順手把整包專案寫回資料夾裡的同一個檔案（覆蓋），
+  // 這樣「儲存專案」不用另外多按一次「匯出」，資料夾裡的檔案永遠是最新狀態。非同步、失敗只在畫面
+  // 上顯示提示、不彈窗打斷操作——localStorage 那份才是每次操作實際依賴的資料，寫檔失敗不影響任何功能
+  function syncProjectsFileToFolder(projects) {
+    if (!supportsFsAccess || !projectDirHandle) return;
+    (async () => {
+      try {
+        const fileHandle = await projectDirHandle.getFileHandle("dispatch_projects.json", { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(JSON.stringify(projects, null, 2));
+        await writable.close();
+      } catch (e) {
+        const statusEl = document.getElementById("projectFolderStatus");
+        if (statusEl) statusEl.textContent = `寫入資料夾檔案失敗：${e.message}（專案仍正常存在這台電腦瀏覽器裡，不影響操作）`;
+      }
+    })();
+  }
+
+  // 選資料夾：如果資料夾裡已經有 dispatch_projects.json（例如從別台電腦複製整個資料夾過來），
+  // 先讀進來跟這台電腦目前已有的專案合併；同名但存檔時間不同才詢問要不要用資料夾裡的覆蓋，
+  // 避免每次選資料夾都跳出一堆確認視窗
+  async function pickProjectFolder() {
+    const statusEl = document.getElementById("projectFolderStatus");
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker();
+    } catch (e) {
+      return; // 使用者按取消
+    }
+    let perm = await dir.queryPermission({ mode: "readwrite" });
+    if (perm !== "granted") perm = await dir.requestPermission({ mode: "readwrite" });
+    if (perm !== "granted") {
+      statusEl.textContent = "沒有取得這個資料夾的寫入權限，沒辦法把專案存進去。";
+      return;
+    }
+    projectDirHandle = dir;
+    try {
+      const fileHandle = await dir.getFileHandle("dispatch_projects.json");
+      const file = await fileHandle.getFile();
+      const fileProjects = JSON.parse(await file.text());
+      const localProjects = loadProjects();
+      const conflictNames = Object.keys(fileProjects).filter((n) => localProjects[n] && localProjects[n].savedAt !== fileProjects[n].savedAt);
+      if (conflictNames.length && !confirm(`資料夾裡的專案檔案跟這台電腦已有的專案，有 ${conflictNames.length} 筆同名但內容不同（${conflictNames.join("、")}），要用資料夾裡的版本覆蓋嗎？`)) {
+        conflictNames.forEach((n) => delete fileProjects[n]);
+      }
+      const merged = Object.assign({}, localProjects, fileProjects);
+      localStorage.setItem(LS_PROJECTS, JSON.stringify(merged));
+      renderProjectOptions();
+      statusEl.textContent = `已選擇資料夾「${dir.name}」，之後儲存/讀取專案會自動使用這裡的 dispatch_projects.json（已帶入資料夾裡原有的專案）。`;
+    } catch (e) {
+      statusEl.textContent = `已選擇資料夾「${dir.name}」，之後儲存/讀取專案會自動使用這裡的 dispatch_projects.json（目前資料夾裡還沒有這個檔案，儲存一次專案後就會建立）。`;
+    }
+  }
+
+  function saveCurrentAsProject(name) {
+    const projects = loadProjects();
+    projects[name] = {
+      savedAt: Date.now(),
+      cases: state.cases,
+      lastMonthFullList: state.lastMonthFullList,
+      lastMonthAuditList: state.lastMonthAuditList,
+      marked: Array.from(state.marked),
+      rejected: Array.from(state.rejected),
+      routeLockEndId: state.routeLockEndId,
+      route: lastRoute ? {
+        startStationName: lastRoute.startStation ? lastRoute.startStation.name : null,
+        order: lastRoute.order.map((p) => p.id),
+      } : null,
+    };
+    persistProjects(projects);
+  }
+
+  // 把存起來的路線順序還原成畫面（直接重用既有的 renderRoutePanel()），而不是呼叫「規劃路線」
+  // 重新自動排一次——使用者可能手動拖曳調整過順序或鎖定過最後一站，載入專案要原封不動接回來，
+  // 不是給一個演算法重算的「差不多」結果。案件本身的座標要靠目前的 state.geocache 現查，
+  // 地理編碼快取是全域共用、不分專案，正常情況下之前查過的案件重新載入還是找得到座標
+  function restoreRouteFromProject(routeSnapshot) {
+    const panel = document.getElementById("routePanel");
+    if (!routeSnapshot || !routeSnapshot.order || !routeSnapshot.order.length) {
+      panel.innerHTML = "";
+      lastRoute = null;
+      return;
+    }
+    const byId = new Map(state.cases.concat(getLastMonthCases()).map((c) => [c.id, c]));
+    const points = [];
+    let unlocated = 0;
+    routeSnapshot.order.forEach((id) => {
+      const c = byId.get(id);
+      if (!c) return; // 案件本身已經不在已匯入資料裡了（例如後來被移除），跳過不畫
+      const loc = state.geocache[cacheKeyFor(c)];
+      if (loc) points.push({ id: c.id, lat: loc.lat, lng: loc.lng, case: c });
+      else unlocated++;
+    });
+    if (points.length < 2) {
+      panel.innerHTML = `<div class="empty-state">已標記且已定位的案件只有 ${points.length} 筆，至少需要 2 筆才能顯示路線（可能需要到地圖視窗重新定位座標）。</div>`;
+      lastRoute = null;
+      return;
+    }
+    const startStation = routeSnapshot.startStationName
+      ? (window.MRT_STATIONS || []).find((s) => s.name === routeSnapshot.startStationName)
+      : null;
+    renderRoutePanel(points, unlocated, startStation);
+    lastRoute = { startStation, order: points, unlocated };
+    persistRouteOrder(points, startStation);
+  }
+
+  function loadProjectByName(name) {
+    const projects = loadProjects();
+    const proj = projects[name];
+    if (!proj) return false;
+    state.cases = proj.cases || [];
+    state.lastMonthFullList = proj.lastMonthFullList || [];
+    state.lastMonthAuditList = proj.lastMonthAuditList || [];
+    state.marked = new Set(proj.marked || []);
+    state.rejected = new Set(proj.rejected || []);
+    state.routeLockEndId = proj.routeLockEndId || null;
+    state.page = 1;
+    persistCases(); persistLastMonthFullList(); persistLastMonthAuditList();
+    persistMarked(); persistRejected(); persistRouteLockEnd();
+    const startName = (proj.route && proj.route.startStationName) || "";
+    const startSel = document.getElementById("routeStartStation");
+    if (startSel && Array.from(startSel.options).some((o) => o.value === startName)) startSel.value = startName;
+    persistRouteStart(startName);
+    renderAll();
+    renderLastMonthPanel();
+    restoreRouteFromProject(proj.route);
+    return true;
+  }
+
+  function deleteProjectByName(name) {
+    const projects = loadProjects();
+    delete projects[name];
+    persistProjects(projects);
+  }
+
+  function renderProjectOptions() {
+    const sel = document.getElementById("projectLoadSelect");
+    if (!sel) return;
+    const projects = loadProjects();
+    const names = Object.keys(projects).sort();
+    const current = sel.value;
+    sel.innerHTML = `<option value="">選擇專案</option>` + names.map((name) => {
+      const p = projects[name];
+      const d = new Date(p.savedAt);
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const ts = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      const lm = (p.lastMonthAuditList || []).length;
+      return `<option value="${escapeHtml(name)}">${escapeHtml(name)}（本月 ${p.cases.length} 筆${lm ? "，上月 " + lm + " 筆" : ""}，${ts} 存）</option>`;
+    }).join("");
+    if (names.includes(current)) sel.value = current;
   }
 
   // 「上月抽查管理」的兩個匯入：跟主匯入不同，這裡是單一份「上月 snapshot」，
@@ -1578,28 +1752,66 @@
   }
   const render = renderAll;
 
-  // ---------- CSV 匯出 (供 Google 我的地圖匯入) ----------
-  // 匯出目前清單 (套用篩選/搜尋條件，不限分頁) 為 CSV
-  function exportCsv() {
-    const list = applyFilters();
-    if (!list.length) { alert("目前沒有任何案件可以匯出。"); return; }
-    const header = ["案件編號", "案件項目", "承辦機關", "行政區", "發生地址", "案件內容", "案件處理", "狀態", "成案時間"];
-    const rows = list.map((c) => [c.id, c.category, c.agency, c.district, "台北市" + c.address, c.content, c.handling, c.status, c.createdAt]);
-    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v || "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  // ---------- CSV / xlsx 匯出 (供 Google 我的地圖匯入) ----------
+  function downloadCsv(header, rows, filenameBase) {
+    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const ts = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `案件清單_${ts}.csv`;
+    a.download = `${filenameBase}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   }
 
-  function exportRoute() {
-    if (!lastRoute || !lastRoute.order.length) { alert("請先按「規劃路線」產生路線後再匯出。"); return; }
+  // 使用者反映 CSV 匯入 Google 我的地圖跳出「資料欄名稱不得重複...」的錯誤，追查後發現使用者
+  // 過去唯二成功的匯入，用的都是機關系統原始 xlsx（不是 CSV），懷疑 Google 我的地圖對「上傳 CSV」
+  // 跟「上傳 xlsx」兩種格式內部處理方式不同，才加這個 xlsx 版本讓使用者可以換一種格式試試看
+  // （沿用已經載入的 SheetJS 函式庫寫檔，跟 parseWorkbookFile() 讀檔是同一顆套件）
+  function downloadXlsx(header, rows, filenameBase) {
+    const aoa = [header, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "工作表1");
+    // 不用 XLSX.writeFile() 本身的下載機制——實測在某些瀏覽器環境下它不會真的觸發檔案下載，
+    // 改成跟 downloadCsv() 一樣手動組 Blob + <a download>，這個做法已經是這個工具現有 CSV/Word
+    // 匯出都在用、確定沒問題的下載方式
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filenameBase}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildCsvHeaderRows() {
+    const list = applyFilters();
+    if (!list.length) { alert("目前沒有任何案件可以匯出。"); return null; }
+    const header = ["案件編號", "案件項目", "承辦機關", "行政區", "發生地址", "案件內容", "案件處理", "狀態", "成案時間"];
+    const rows = list.map((c) => [c.id, c.category, c.agency, c.district, "台北市" + c.address, c.content, c.handling, c.status, c.createdAt]);
+    return { header, rows };
+  }
+
+  // 匯出目前清單 (套用篩選/搜尋條件，不限分頁)
+  function exportCsv() {
+    const built = buildCsvHeaderRows();
+    if (!built) return;
+    downloadCsv(built.header, built.rows, `案件清單_${new Date().toISOString().slice(0, 10)}`);
+  }
+  function exportXlsx() {
+    const built = buildCsvHeaderRows();
+    if (!built) return;
+    downloadXlsx(built.header, built.rows, `案件清單_${new Date().toISOString().slice(0, 10)}`);
+  }
+
+  function buildRouteHeaderRows() {
+    if (!lastRoute || !lastRoute.order.length) { alert("請先按「規劃路線」產生路線後再匯出。"); return null; }
     const { startStation, order } = lastRoute;
     const header = ["順序", "案件編號", "案件項目", "行政區", "發生地址", "案件內容", "案件處理", "到下一站距離(公尺)"];
     const rows = [];
@@ -1612,17 +1824,18 @@
       const idLabel = (p.case.realId || p.id) + (p.case.id.indexOf("抽") === 0 ? "（上月抽查）" : "");
       rows.push([i + 1, idLabel, p.case.category, p.case.district, "台北市" + p.case.address, p.case.content, p.case.handling, toNext]);
     });
-    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const ts = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `查訪路線_${ts}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    return { header, rows };
+  }
+
+  function exportRoute() {
+    const built = buildRouteHeaderRows();
+    if (!built) return;
+    downloadCsv(built.header, built.rows, `查訪路線_${new Date().toISOString().slice(0, 10)}`);
+  }
+  function exportRouteXlsx() {
+    const built = buildRouteHeaderRows();
+    if (!built) return;
+    downloadXlsx(built.header, built.rows, `查訪路線_${new Date().toISOString().slice(0, 10)}`);
   }
 
   // 讀取地圖截圖（不管是從檔案選的還是從剪貼簿貼的），轉成 Word 匯出要用的格式：
@@ -1802,6 +2015,63 @@
       renderAll();
     });
 
+    document.getElementById("btnPickProjectFolder").addEventListener("click", () => {
+      if (!supportsFsAccess) {
+        alert("這個瀏覽器或開啟方式不支援選資料夾直接存檔（僅 Chrome/Edge，且不能用 file:// 雙擊開啟）。專案仍會正常存在這台電腦的瀏覽器裡，不影響使用，只是沒辦法自動同步成資料夾裡的檔案。");
+        return;
+      }
+      pickProjectFolder();
+    });
+
+    document.getElementById("btnNewProject").addEventListener("click", () => {
+      const hasData = state.cases.length || state.lastMonthFullList.length || state.lastMonthAuditList.length;
+      if (hasData && !confirm("開新專案會清除目前的本月與上月資料、♡🚫標記與路線規劃，尚未儲存的工作會不見。確定要開新專案嗎？")) return;
+      state.cases = [];
+      state.geocache = {};
+      state.marked = new Set();
+      state.rejected = new Set();
+      state.filter = emptyFilter();
+      state.page = 1;
+      state.routeLockEndId = null;
+      state.lastMonthFullList = [];
+      state.lastMonthAuditList = [];
+      persistCases(); persistGeocache(); persistMarked(); persistRejected(); persistRouteLockEnd();
+      persistLastMonthFullList(); persistLastMonthAuditList();
+      lastRoute = null;
+      localStorage.removeItem(LS_ROUTE);
+      document.getElementById("searchBox").value = "";
+      document.getElementById("routePanel").innerHTML = "";
+      document.getElementById("projectNameInput").value = "";
+      renderAll();
+      renderLastMonthPanel();
+      document.getElementById("projectStatus").textContent = "已開新專案，請到下方「本月資料」「上月資料」匯入。";
+    });
+    document.getElementById("btnSaveProject").addEventListener("click", () => {
+      const name = document.getElementById("projectNameInput").value.trim();
+      if (!name) { alert("請先輸入行政區名稱。"); return; }
+      if (!state.cases.length) { alert("目前沒有已匯入的案件資料，沒有東西可以存。"); return; }
+      const projects = loadProjects();
+      if (projects[name] && !confirm(`已經有一份叫「${name}」的專案，要覆蓋掉嗎？`)) return;
+      saveCurrentAsProject(name);
+      renderProjectOptions();
+      document.getElementById("projectStatus").textContent = `已儲存專案「${name}」（本月 ${state.cases.length} 筆，上月 ${state.lastMonthAuditList.length} 筆）。`;
+    });
+    document.getElementById("btnLoadProject").addEventListener("click", () => {
+      const name = document.getElementById("projectLoadSelect").value;
+      if (!name) { alert("請先選擇要讀取的專案。"); return; }
+      if (!confirm(`讀取專案「${name}」會取代目前的本月／上月資料／標記／路線規劃，尚未儲存的工作會不見。確定要讀取嗎？`)) return;
+      loadProjectByName(name);
+      document.getElementById("projectStatus").textContent = `已讀取專案「${name}」。`;
+    });
+    document.getElementById("btnDeleteProject").addEventListener("click", () => {
+      const name = document.getElementById("projectLoadSelect").value;
+      if (!name) { alert("請先選擇要刪除的專案。"); return; }
+      if (!confirm(`確定要刪除專案「${name}」嗎？此動作無法復原（目前畫面上的資料不受影響，只是刪除這份儲存的專案存檔）。`)) return;
+      deleteProjectByName(name);
+      renderProjectOptions();
+      document.getElementById("projectStatus").textContent = `已刪除專案「${name}」。`;
+    });
+
     document.getElementById("btnUploadLastMonthFull").addEventListener("click", () => document.getElementById("lastMonthFullInput").click());
     document.getElementById("lastMonthFullInput").addEventListener("change", (e) => {
       handleLastMonthFullFiles(e.target.files);
@@ -1862,9 +2132,11 @@
       renderTable();
     });
     document.getElementById("btnExportCsv").addEventListener("click", exportCsv);
+    document.getElementById("btnExportXlsx").addEventListener("click", exportXlsx);
     document.getElementById("btnOpenMap").addEventListener("click", openMapWindow);
     document.getElementById("btnPlanRoute").addEventListener("click", planAndShowRoute);
     document.getElementById("btnExportRoute").addEventListener("click", exportRoute);
+    document.getElementById("btnExportRouteXlsx").addEventListener("click", exportRouteXlsx);
     document.getElementById("btnExportRouteWord").addEventListener("click", exportRouteWord);
     document.getElementById("btnChooseRouteMapImage").addEventListener("click", () => {
       document.getElementById("routeMapImageInput").click();
@@ -1951,6 +2223,7 @@
     switchTab(state.activeTab);
     initGeocodeSettingsUi();
     populateRouteStartOptions();
+    renderProjectOptions();
     document.getElementById("pageSizeSelect").value = String(state.pageSize);
     renderAll();
     renderLastMonthPanel();
